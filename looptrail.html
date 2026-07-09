@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta http-equiv="Cache-Control" content="no-store">
+<title>Looptrail</title>
+<link rel="stylesheet" href="looptrail.css?v=3">
+</head>
+<body>
+
+<main id="game" hidden>
+  <header id="hud">
+    <div class="hud-item" id="hud-board">Board 1</div>
+    <div class="hud-item" id="hud-turns">Turn 0</div>
+    <div class="hud-item hud-coins" id="hud-coins">🪙 0</div>
+    <div class="hud-item hud-objective" id="hud-objective"></div>
+    <div class="hud-item" id="hud-deck">Deck 0 · Disc 0</div>
+  </header>
+  <div id="artifact-shelf"></div>
+
+  <div id="board-wrap">
+    <div id="board"></div>
+    <div id="board-center">
+      <div id="center-msg"></div>
+    </div>
+  </div>
+
+  <footer id="hand-area">
+    <div id="hand"></div>
+    <div id="hand-hint">Select a card to see where you can move.</div>
+  </footer>
+</main>
+
+<div id="shop" class="overlay" hidden>
+  <div class="panel">
+    <h2 class="panel-title">🛒 Merchant</h2>
+    <p class="panel-text small">Board-only purchases — coins are refunded and items returned when you complete this board.</p>
+    <div id="shop-items"></div>
+    <button id="btn-shop-close" class="btn">Leave</button>
+  </div>
+</div>
+
+<div id="quest" class="overlay" hidden>
+  <div class="panel">
+    <h2 class="panel-title">★ Quest</h2>
+    <p id="quest-text" class="panel-text"></p>
+    <div class="btn-row">
+      <button id="btn-quest-accept" class="btn">Accept</button>
+      <button id="btn-quest-decline" class="btn btn-plain">Not now</button>
+    </div>
+  </div>
+</div>
+
+<div id="result" class="overlay" hidden>
+  <div class="panel">
+    <h2 id="result-title" class="panel-title"></h2>
+    <p id="result-text" class="panel-text"></p>
+    <button id="btn-result" class="btn btn-big"></button>
+  </div>
+</div>
+
+<div id="reward" class="overlay" hidden>
+  <div class="panel">
+    <h2 id="reward-title" class="panel-title"></h2>
+    <p id="reward-text" class="panel-text small"></p>
+    <div id="reward-items"></div>
+    <p class="panel-text small">Choose one reward — it joins your run for good.</p>
+  </div>
+</div>
+
+<div id="menu" class="overlay">
+  <div class="panel menu-panel">
+    <h1 class="logo">Looptrail</h1>
+    <p class="tagline">A little roguelike board game.<br>Draw a card, pick a direction, ride the loop.</p>
+    <div class="howto">
+      <p>🂠 Draw 1, play 1 — a card moves you its value in either direction around the loop.</p>
+      <p>🎯 Finish each board's objective before the turns run out.</p>
+      <p>🪙 Never let your coins drop below zero.</p>
+      <p>🏆 Clear a board to claim a reward and ride on — 10 boards, then the endless trail.</p>
+    </div>
+    <p id="menu-best" class="menu-best" hidden></p>
+    <button id="btn-start" class="btn btn-big">Start Run</button>
+  </div>
+</div>
+
+<script src="looptrail.js?v=3"></script>
+</body>
+</html>
