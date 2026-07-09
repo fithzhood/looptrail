@@ -18,6 +18,7 @@ const mod = (n, m) => ((n % m) + m) % m;
 const ARTIFACTS = {
   satchel:   { name: 'Deep Satchel',      icon: '🎒', desc: '+1 max hand size.', shopOnly: true },
   quill:     { name: 'Oaken Quill',       icon: '🪶', desc: 'Draw an extra card each turn (up to your hand limit).', shopOnly: true },
+  bond:      { name: "Merchant's Bond",   icon: '🧰', desc: 'A heavy strongbox: −1 max hand size while you carry it. The merchant buys it back at TRIPLE price when you complete the board.', shopOnly: true, refund3x: true },
   clover:    { name: 'Lucky Clover',      icon: '🍀', desc: '+1 coin whenever you gain coins.' },
   idol:      { name: 'Green Idol',        icon: '🗿', desc: '+2 coins each time you complete a lap.' },
   hourglass: { name: 'Patient Hourglass', icon: '⏳', desc: '+2 turn limit on every board.' },
@@ -53,6 +54,23 @@ const SPECIALS = {
   stride: { value: 3, name: 'Stride',    desc: 'Move 3, then draw a card.' },
 };
 
+const PAWN_SVG = `
+<svg viewBox="0 0 40 50" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="pawn-grad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#e0685c"/>
+      <stop offset="1" stop-color="#9a2f26"/>
+    </linearGradient>
+  </defs>
+  <ellipse cx="20" cy="46.5" rx="12" ry="2.8" fill="rgba(0,0,0,.30)"/>
+  <rect x="8.5" y="37.5" width="23" height="7.5" rx="3.6" fill="url(#pawn-grad)" stroke="#5e1f1a" stroke-width="1.4"/>
+  <path d="M15.8 17 C15.8 22 13.6 26.5 11.8 31 C10.9 33.4 10.4 35.6 10.3 38 H29.7 C29.6 35.6 29.1 33.4 28.2 31 C26.4 26.5 24.2 22 24.2 17 Z"
+        fill="url(#pawn-grad)" stroke="#5e1f1a" stroke-width="1.4"/>
+  <ellipse cx="20" cy="16.8" rx="5.4" ry="2.1" fill="url(#pawn-grad)" stroke="#5e1f1a" stroke-width="1.2"/>
+  <circle cx="20" cy="10" r="7" fill="url(#pawn-grad)" stroke="#5e1f1a" stroke-width="1.4"/>
+  <ellipse cx="17.2" cy="7.6" rx="2.1" ry="2.9" fill="#ffffff" opacity=".32"/>
+</svg>`;
+
 const TILE_ICONS = {
   start: '⌂', blank: '', coin: '🪙', loss: '🕳', artifact: '🏺',
   draw: '🃏', discard: '✂️', slide: '➤', gust: '🌀', quest: '★', trap: '', ferry: '⛵',
@@ -81,7 +99,7 @@ function saveBest(boardsCompleted) {
 let S = null;
 
 const hasArt = id => S.artifacts.includes(id);
-const maxHand = () => 5 + (hasArt('satchel') ? 1 : 0);
+const maxHand = () => 5 + (hasArt('satchel') ? 1 : 0) - (hasArt('bond') ? 1 : 0);
 const turnLimit = () => S.board.turnLimit + (hasArt('hourglass') ? 2 : 0);
 
 // ---------- board generation ----------
@@ -333,7 +351,7 @@ function tileSizePx() {
   const boardPx = $('board').clientWidth;
   const n = S.board.size;
   const circ = 2 * Math.PI * (boardPx * 0.44);
-  return Math.max(30, Math.min(60, circ / n * (n > 19 ? 0.9 : 0.82)));
+  return Math.max(30, Math.min(62, circ / n * (n > 19 ? 0.92 : 0.86)));
 }
 
 function buildBoardDOM() {
@@ -350,6 +368,7 @@ function buildBoardDOM() {
   }
   const token = document.createElement('div');
   token.id = 'player-token';
+  token.innerHTML = PAWN_SVG;
   board.appendChild(token);
   if (S.board.merchant) {
     const m = document.createElement('div');
@@ -850,9 +869,12 @@ function shopStock() {
     const stock = [];
     const markup = S.boardIndex - 1;              // merchant prices climb with each board
     const smallMarkup = Math.floor(markup / 2);
-    const unowned = shuffle(artifactPool('shop'));
+    const unowned = shuffle(artifactPool('shop').filter(id => id !== 'bond'));
+    if (!hasArt('bond') && Math.random() < 0.45) {
+      stock.push({ kind: 'artifact', id: 'bond', price: rand(7, 9) + markup });
+    }
     if (unowned[0]) stock.push({ kind: 'artifact', id: unowned[0], price: rand(8, 10) + markup });
-    if (unowned[1] && Math.random() < 0.5) stock.push({ kind: 'artifact', id: unowned[1], price: rand(8, 10) + markup });
+    if (unowned[1] && stock.length < 3 && Math.random() < 0.5) stock.push({ kind: 'artifact', id: unowned[1], price: rand(8, 10) + markup });
     while (stock.length < 3) {
       if (Math.random() < 0.3) {
         stock.push({ kind: 'special', id: pick(Object.keys(SPECIALS)), price: rand(6, 8) + smallMarkup });
@@ -943,8 +965,9 @@ function refundPurchases() {
   if (!S.purchases.length) return '';
   let total = 0;
   for (const pu of S.purchases) {
-    total += pu.cost;
-    eggCoinGif(pu.cost); // one animation per refunded item, sized to its own value
+    const value = (pu.kind === 'artifact' && ARTIFACTS[pu.id].refund3x) ? pu.cost * 3 : pu.cost;
+    total += value;
+    eggCoinGif(value); // one animation per refunded item, sized to its own value
     if (pu.kind === 'artifact') {
       S.artifacts = S.artifacts.filter(id => id !== pu.id);
     } else {
@@ -1086,6 +1109,7 @@ function renderHand() {
       + (c.spec ? ' special' : '')
       + (S.selected === i && !S.pendingDiscard ? ' selected' : '');
     const dirMark = c.dir === 1 ? '<div class="cdir">↻</div>' : c.dir === -1 ? '<div class="cdir ccw">↺</div>' : '';
+    el.dataset.v = c.value;
     el.innerHTML = `<div class="val">${c.value}</div>` + (c.spec ? `<div class="name">${SPECIALS[c.spec].name}</div>` : '') + dirMark;
     el.addEventListener('click', () => onCardClick(i));
     hand.appendChild(el);

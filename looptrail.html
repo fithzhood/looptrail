@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta http-equiv="Cache-Control" content="no-store">
 <title>Looptrail</title>
-<link rel="stylesheet" href="looptrail.css?v=4">
+<link rel="stylesheet" href="looptrail.css?v=5">
 </head>
 <body>
 
@@ -22,6 +22,17 @@
   <div id="board-wrap">
     <div id="board"></div>
     <div id="board-center">
+      <svg id="compass-rose" viewBox="0 0 100 100" aria-hidden="true">
+        <g fill="none" stroke="currentColor">
+          <circle cx="50" cy="50" r="34" stroke-width="1.6"/>
+          <circle cx="50" cy="50" r="28" stroke-width=".7"/>
+          <polygon points="50,8 92,50 50,92 8,50" stroke-width="1.4"/>
+          <polygon points="29,29 71,29 71,71 29,71" stroke-width=".9"/>
+          <circle cx="50" cy="50" r="4.5" stroke-width="1.4"/>
+          <line x1="50" y1="8" x2="50" y2="92" stroke-width=".5"/>
+          <line x1="8" y1="50" x2="92" y2="50" stroke-width=".5"/>
+        </g>
+      </svg>
       <div id="center-msg"></div>
     </div>
   </div>
@@ -112,6 +123,6 @@
   </div>
 </div>
 
-<script src="looptrail.js?v=4"></script>
+<script src="looptrail.js?v=5"></script>
 </body>
 </html>
