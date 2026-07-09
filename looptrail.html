@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta http-equiv="Cache-Control" content="no-store">
 <title>Looptrail</title>
-<link rel="stylesheet" href="looptrail.css?v=3">
+<link rel="stylesheet" href="looptrail.css?v=4">
 </head>
 <body>
 
@@ -14,9 +14,9 @@
     <div class="hud-item" id="hud-board">Board 1</div>
     <div class="hud-item" id="hud-turns">Turn 0</div>
     <div class="hud-item hud-coins" id="hud-coins">🪙 0</div>
-    <div class="hud-item hud-objective" id="hud-objective"></div>
     <div class="hud-item" id="hud-deck">Deck 0 · Disc 0</div>
   </header>
+  <div id="objective-bar"></div>
   <div id="artifact-shelf"></div>
 
   <div id="board-wrap">
@@ -31,6 +31,9 @@
     <div id="hand-hint">Select a card to see where you can move.</div>
   </footer>
 </main>
+
+<button id="btn-ilost" hidden>I lost</button>
+<input id="egg-file" type="file" accept=".zip" hidden>
 
 <div id="shop" class="overlay" hidden>
   <div class="panel">
@@ -69,6 +72,31 @@
   </div>
 </div>
 
+<div id="egg-loading" class="overlay egg-layer" hidden>
+  <div class="panel egg-panel">
+    <h2 class="panel-title" id="egg-load-title">Loading collection…</h2>
+    <div id="egg-progress-track"><div id="egg-progress-fill"></div></div>
+    <p id="egg-load-count" class="panel-text small"></p>
+    <div id="egg-preview-wrap"><img id="egg-preview" alt=""></div>
+  </div>
+</div>
+
+<div id="egg-gif" hidden>
+  <div id="egg-gif-img"></div>
+  <div id="egg-gif-secs"></div>
+</div>
+
+<div id="egg-stats" class="overlay egg-layer" hidden>
+  <div class="panel egg-panel">
+    <h2 class="panel-title">Your Session</h2>
+    <p id="egg-stats-text" class="panel-text"></p>
+    <div class="btn-row">
+      <button id="btn-egg-continue" class="btn">Keep playing</button>
+      <button id="btn-egg-newrun" class="btn btn-plain">New run</button>
+    </div>
+  </div>
+</div>
+
 <div id="menu" class="overlay">
   <div class="panel menu-panel">
     <h1 class="logo">Looptrail</h1>
@@ -84,6 +112,6 @@
   </div>
 </div>
 
-<script src="looptrail.js?v=3"></script>
+<script src="looptrail.js?v=4"></script>
 </body>
 </html>

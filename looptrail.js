@@ -16,8 +16,8 @@ const mod = (n, m) => ((n % m) + m) % m;
 
 // ---------- content ----------
 const ARTIFACTS = {
-  satchel:   { name: 'Deep Satchel',      icon: '🎒', desc: '+1 max hand size.' },
-  quill:     { name: 'Oaken Quill',       icon: '🪶', desc: 'Draw an extra card each turn (up to your hand limit).' },
+  satchel:   { name: 'Deep Satchel',      icon: '🎒', desc: '+1 max hand size.', shopOnly: true },
+  quill:     { name: 'Oaken Quill',       icon: '🪶', desc: 'Draw an extra card each turn (up to your hand limit).', shopOnly: true },
   clover:    { name: 'Lucky Clover',      icon: '🍀', desc: '+1 coin whenever you gain coins.' },
   idol:      { name: 'Green Idol',        icon: '🗿', desc: '+2 coins each time you complete a lap.' },
   hourglass: { name: 'Patient Hourglass', icon: '⏳', desc: '+2 turn limit on every board.' },
@@ -26,7 +26,24 @@ const ARTIFACTS = {
   seal:      { name: 'Quest Seal',        icon: '📜', desc: '+3 coins from every quest reward.' },
   compass:   { name: 'Old Compass',       icon: '🧭', desc: 'Gust tiles no longer restrict your direction.' },
   bell:      { name: 'Warning Bell',      icon: '🔔', desc: 'Hidden thief traps are revealed to you.' },
+  // hidden-mode exclusives — they shape the animation system, nothing else
+  egg_hourglass: { name: 'Hourglass of Indulgence', icon: '⌛', desc: 'Every animation lasts 3 seconds longer.', egg: true },
+  egg_bell:      { name: "Siren's Bell",            icon: '🛎️', desc: 'Meeting any NPC plays a bonus animation.', egg: true },
+  egg_prism:     { name: 'Echo Prism',              icon: '🔮', desc: 'Animations may echo: 25% chance a second one of the same length follows.', egg: true },
+  egg_chain:     { name: 'Gilded Chain',            icon: '⛓️', desc: 'Coin losses play animations half again as long.', egg: true },
+  egg_die:       { name: 'Velvet Die',              icon: '🎲', desc: 'Every animation gains 0–4 bonus seconds, rolled each time.', egg: true },
 };
+
+function artifactPool(src) {
+  // src: 'tile' | 'shop' | 'reward'
+  return Object.keys(ARTIFACTS).filter(id => {
+    if (hasArt(id)) return false;
+    const a = ARTIFACTS[id];
+    if (a.egg && !EGG.active) return false;
+    if (a.shopOnly && src !== 'shop') return false;
+    return true;
+  });
+}
 
 const SPECIALS = {
   echo:   { value: 0, name: 'Echo',      desc: 'Stay in place and trigger this tile again.' },
@@ -41,14 +58,15 @@ const TILE_ICONS = {
   draw: '🃏', discard: '✂️', slide: '➤', gust: '🌀', quest: '★', trap: '', ferry: '⛵',
 };
 
-const OBJ_LABELS = {
-  laps: '➰ Laps', coins: '🪙 Earned', arts: '🏺 Artifacts', quests: '★ Quests',
-  survive: '⏳ Turns', hand: '🃏 In hand', visit: '👣 Tiles', home: '⌂ Returns',
-};
-
 function startingDeck() {
-  // 1x1, 2x2, 3x3, 4x2, 5x1
-  return [1, 2, 2, 3, 3, 3, 4, 4, 5].map(v => ({ value: v }));
+  // 10 cards, randomized each run: 4 clockwise-only, 4 counterclockwise-only, 2 free
+  const values = shuffle([1, 2, 2, 3, 3, 3, 3, 4, 4, 5]);
+  return values.map((v, i) => {
+    const c = { value: v };
+    if (i < 4) c.dir = 1;
+    else if (i < 8) c.dir = -1;
+    return c;
+  });
 }
 
 // ---------- save (rubber-band pacing) ----------
@@ -92,18 +110,27 @@ function makeBoard(b) {
   const objective = { type, target };
 
   // tile bag: objective-critical tiles first, extras trimmed to fit
+  const hell = type === 'survive'; // survival boards are meant to be brutal
+  const coinAmt = 2 + Math.floor(b / 3);
+  const lossAmt = (hell ? 3 : 2) + Math.floor(b / 3);
   const crit = [], extra = [];
   const add = (list, tile, n) => { for (let i = 0; i < n; i++) list.push({ ...tile }); };
-  add(crit, { type: 'coin', amt: 2 }, (type === 'coins' ? 5 : 2) + Math.floor(size / 20));
-  add(crit, { type: 'coin', amt: 4 }, 1);
+  add(crit, { type: 'coin', amt: coinAmt }, (type === 'coins' ? 5 : 2) + Math.floor(size / 20));
+  add(crit, { type: 'coin', amt: coinAmt + 2 }, 1);
   add(crit, { type: 'artifact' }, type === 'arts' ? target + 1 : 1);
-  add(crit, { type: 'draw' }, type === 'hand' ? 3 : 1);
+  add(crit, { type: 'draw' }, type === 'hand' ? 4 : 1);
   add(crit, { type: 'quest' }, type === 'quests' ? target + 1 : (Math.random() < 0.5 ? 1 : 0));
-  add(extra, { type: 'loss', amt: 2 + Math.floor(b / 4) }, 2 + Math.floor(b / 3) + (type === 'survive' ? 1 : 0));
+  if (hell) {
+    add(crit, { type: 'loss', amt: lossAmt }, 3);
+    add(crit, { type: 'loss', half: true }, 2);
+    add(crit, { type: 'trap' }, 3 + (b > 5 ? 1 : 0));
+  } else {
+    add(extra, { type: 'loss', amt: lossAmt }, 2 + Math.floor(b / 3));
+    add(extra, { type: 'trap' }, 1 + (b > 5 ? 1 : 0));
+  }
   add(extra, { type: 'discard' }, 1);
   add(extra, { type: 'slide', amt: 2 }, 1 + (size > 18 ? 1 : 0));
   add(extra, { type: 'gust' }, 1 + (size > 20 ? 1 : 0));
-  add(extra, { type: 'trap' }, 1 + (b > 5 || type === 'survive' ? 1 : 0));
   add(extra, { type: 'ferry' }, size > 16 ? 1 : 0);
   shuffle(extra);
   let bag = crit.concat(extra).slice(0, size - 1);
@@ -112,7 +139,7 @@ function makeBoard(b) {
   const tiles = [{ type: 'start' }, ...bag];
 
   const merchant = (type === 'arts' || Math.random() < 0.6) ? { pos: rand(2, size - 2) } : null;
-  return { size, tiles, objective, turnLimit: limit, merchant };
+  return { size, tiles, objective, turnLimit: limit, merchant, hardThief: hell };
 }
 
 function objectiveDesc() {
@@ -174,7 +201,7 @@ function startRun() {
     msgs: [],
   };
   S.board = makeBoard(S.boardIndex);
-  for (let i = 0; i < 3; i++) drawCard(true);
+  for (let i = 0; i < 2; i++) drawCard(true);
   $('menu').hidden = true;
   $('result').hidden = true;
   $('reward').hidden = true;
@@ -204,7 +231,7 @@ function nextBoard() {
   S.draw = shuffle(S.draw.concat(S.discard, S.hand));
   S.discard = [];
   S.hand = [];
-  for (let i = 0; i < 3; i++) drawCard(true);
+  for (let i = 0; i < 2; i++) drawCard(true);
   $('result').hidden = true;
   $('reward').hidden = true;
   buildBoardDOM();
@@ -222,6 +249,7 @@ function addCoins(n, src) {
   if (n > 0 && src === 'quest' && hasArt('seal')) n += 3;
   S.coins += n;
   if (n > 0) S.boardCoins += n;
+  eggCoinGif(n);
   renderHUD();
   const el = $('hud-coins');
   el.classList.remove('coin-flash');
@@ -251,7 +279,10 @@ function drawCard(silent) {
   return c;
 }
 
-const cardLabel = c => c.spec ? `${SPECIALS[c.spec].name} (${c.value})` : `${c.value}`;
+const cardLabel = c => {
+  const base = c.spec ? `${SPECIALS[c.spec].name} (${c.value})` : `${c.value}`;
+  return c.dir === 1 ? `${base} ↻` : c.dir === -1 ? `${base} ↺` : base;
+};
 
 function beginTurn(first) {
   if (S.over) return;
@@ -387,6 +418,7 @@ function renderTiles() {
     const shownType = hiddenTrap && !hasArt('bell') ? 'blank' : t.type;
     el.className = 'tile t-' + shownType + (t.used ? ' used' : '');
     let icon = TILE_ICONS[shownType] || '';
+    if (t.type === 'loss' && t.half) icon = '💀';
     if (t.type === 'trap' && t.used) icon = '⚠️';
     if (hiddenTrap && hasArt('bell')) { icon = '⚠️'; el.classList.add('revealed'); }
     el.innerHTML = icon ? `<span>${icon}</span>` : '';
@@ -419,8 +451,8 @@ function reachableFrom(card) {
   const n = S.board.size;
   if (card.spec === 'echo') return [{ tile: S.pos, dir: 1 }];
   const opts = [];
-  if (S.forcedDir !== -1) opts.push({ tile: mod(S.pos + card.value, n), dir: 1 });
-  if (S.forcedDir !== 1 && card.spec !== 'charge') {
+  if (S.forcedDir !== -1 && card.dir !== -1) opts.push({ tile: mod(S.pos + card.value, n), dir: 1 });
+  if (S.forcedDir !== 1 && card.spec !== 'charge' && card.dir !== 1) {
     const ccw = mod(S.pos - card.value, n);
     if (!opts.some(o => o.tile === ccw)) opts.push({ tile: ccw, dir: -1 });
   }
@@ -433,12 +465,34 @@ function selectCard(idx) {
   renderAll();
 }
 
+function tileInfo(t) {
+  if (t.type === 'trap' && !t.used && !hasArt('bell')) return ['', 'An empty tile. Nothing happens.']; // stays secret
+  switch (t.type) {
+    case 'start':    return ['⌂ Start', 'The start tile — landing here counts as a return home.'];
+    case 'blank':    return ['', 'An empty tile. Nothing happens.'];
+    case 'coin':     return ['🪙 Coins', `Gain ${t.amt} coins when you land here.`];
+    case 'loss':     return t.half ? ['💀 Pit', 'Lose HALF of your coins when you land here.'] : ['🕳 Toll', `Lose ${t.amt} coins when you land here.`];
+    case 'artifact': return ['🏺 Artifact', t.used ? 'Already looted.' : 'One-time artifact pickup.'];
+    case 'draw':     return ['🃏 Draw', t.used ? 'Already used.' : 'Draw a card (one-time).'];
+    case 'discard':  return ['✂️ Discard', t.used ? 'Already used.' : 'Discard a card of your choice (one-time).'];
+    case 'slide':    return ['➤ Slide', `Slides you ${t.amt} tiles onward in your direction of travel.`];
+    case 'gust':     return ['🌀 Gust', 'A gust locks the direction of your next move.'];
+    case 'quest':    return ['★ Quest', t.done ? 'Quest completed.' : 'A quest giver — land here to hear the offer.'];
+    case 'ferry':    return ['⛵ Ferry', 'Carries you straight to the far side of the loop.'];
+    case 'trap':     return ['⚠️ Trap', t.used ? 'A sprung thief trap.' : 'Your bell senses a hidden thief trap!'];
+  }
+  return ['', ''];
+}
+
 function onTileClick(i) {
-  if (S.busy || S.over || S.selected === null || S.pendingDiscard) return;
-  const card = S.hand[S.selected];
-  const opt = reachableFrom(card).find(o => o.tile === i);
-  if (!opt) return;
-  playCard(S.selected, opt);
+  if (S.busy || S.over || S.pendingDiscard) return;
+  if (S.selected !== null) {
+    const card = S.hand[S.selected];
+    const opt = reachableFrom(card).find(o => o.tile === i);
+    if (opt) { playCard(S.selected, opt); return; }
+  }
+  const [name, desc] = tileInfo(S.board.tiles[i]);
+  setMsg(name ? `<b>${name}</b> — ${desc}` : desc);
 }
 
 function playCard(handIdx, opt) {
@@ -555,15 +609,17 @@ function resolveLanding(dir, depth, sneak) {
       floatText(S.pos, `+${t.amt} 🪙`, 'good');
       if (!addCoins(t.amt)) return;
       break;
-    case 'loss':
-      addMsg(`🕳 You lose ${t.amt} coins.`);
-      floatText(S.pos, `−${t.amt} 🪙`, 'bad');
-      if (!addCoins(-t.amt)) return;
+    case 'loss': {
+      const lost = t.half ? Math.ceil(Math.max(0, S.coins) / 2) : t.amt;
+      addMsg(t.half ? `💀 The pit swallows half your coins (−${lost}).` : `🕳 You lose ${t.amt} coins.`);
+      floatText(S.pos, `−${lost} 🪙`, 'bad');
+      if (lost > 0 && !addCoins(-lost)) return;
       break;
+    }
     case 'artifact':
       if (!t.used) {
         t.used = true;
-        const unowned = Object.keys(ARTIFACTS).filter(id => !hasArt(id));
+        const unowned = artifactPool('tile');
         S.boardArts++;
         if (unowned.length) {
           const id = pick(unowned);
@@ -656,6 +712,7 @@ function afterEffects() {
   renderAll();
   if (S.thief && S.thief.pos === S.pos) {
     addMsg('🥷 You caught the thief! +4 coins bounty.');
+    eggBonusGif();
     floatText(S.pos, '+4 🪙', 'good');
     S.thief = null;
     positionNPCs();
@@ -682,14 +739,16 @@ function moveNPCs() {
     S.board.merchant.pos = mod(S.board.merchant.pos + 1, n);
   }
   if (S.thief) {
+    const speed = S.board.hardThief ? 3 : 2;
     let d = mod(S.pos - S.thief.pos, n);
     if (d > n / 2) d -= n;
-    const step = Math.sign(d) * Math.min(Math.abs(d), 2);
+    const step = Math.sign(d) * Math.min(Math.abs(d), speed);
     S.thief.pos = mod(S.thief.pos + step, n);
     if (S.thief.pos === S.pos) {
-      let amt = rand(3, 6);
+      let amt = S.board.hardThief ? rand(6, 10) : rand(3, 6);
       if (hasArt('charm')) amt = Math.ceil(amt / 2);
       addMsg(`🥷 The thief catches you and steals ${amt} coins, then vanishes!`);
+      eggBonusGif();
       floatText(S.pos, `−${amt} 🪙`, 'bad');
       S.thief = null;
       if (!addCoins(-amt)) return;
@@ -715,6 +774,7 @@ function onCardClick(idx) {
 
 // ---------- quests ----------
 function offerQuest(giverTile, cont) {
+  eggBonusGif();
   const n = S.board.size;
   let q;
   if (Math.random() < 0.5) {
@@ -788,15 +848,17 @@ let shopCont = null;
 function shopStock() {
   if (!S.board.shopStock) {
     const stock = [];
-    const unowned = shuffle(Object.keys(ARTIFACTS).filter(id => !hasArt(id)));
-    if (unowned[0]) stock.push({ kind: 'artifact', id: unowned[0], price: rand(8, 10) });
-    if (unowned[1] && Math.random() < 0.5) stock.push({ kind: 'artifact', id: unowned[1], price: rand(8, 10) });
+    const markup = S.boardIndex - 1;              // merchant prices climb with each board
+    const smallMarkup = Math.floor(markup / 2);
+    const unowned = shuffle(artifactPool('shop'));
+    if (unowned[0]) stock.push({ kind: 'artifact', id: unowned[0], price: rand(8, 10) + markup });
+    if (unowned[1] && Math.random() < 0.5) stock.push({ kind: 'artifact', id: unowned[1], price: rand(8, 10) + markup });
     while (stock.length < 3) {
       if (Math.random() < 0.3) {
-        stock.push({ kind: 'special', id: pick(Object.keys(SPECIALS)), price: rand(6, 8) });
+        stock.push({ kind: 'special', id: pick(Object.keys(SPECIALS)), price: rand(6, 8) + smallMarkup });
       } else {
         const v = pick([2, 3, 4]);
-        stock.push({ kind: 'card', card: { value: v }, price: 3 + v });
+        stock.push({ kind: 'card', card: { value: v }, price: 3 + v + smallMarkup });
       }
     }
     S.board.shopStock = stock;
@@ -810,6 +872,7 @@ function priceOf(item) {
 
 function openShop(cont) {
   shopCont = cont;
+  eggBonusGif();
   renderShop();
   $('shop').hidden = false;
 }
@@ -851,6 +914,7 @@ function buyItem(i) {
   if (item.sold || S.coins < p) return;
   item.sold = true;
   S.coins -= p;
+  eggCoinGif(-p);
   if (item.kind === 'artifact') {
     S.artifacts.push(item.id);
     S.boardArts++;
@@ -880,6 +944,7 @@ function refundPurchases() {
   let total = 0;
   for (const pu of S.purchases) {
     total += pu.cost;
+    eggCoinGif(pu.cost); // one animation per refunded item, sized to its own value
     if (pu.kind === 'artifact') {
       S.artifacts = S.artifacts.filter(id => id !== pu.id);
     } else {
@@ -895,11 +960,6 @@ function refundPurchases() {
 }
 
 // ---------- objective / win / loss ----------
-function objectiveText() {
-  const o = S.board.objective;
-  return `${OBJ_LABELS[o.type]} ${Math.min(objProgress(), o.target)}/${o.target}`;
-}
-
 function checkBoardEnd() {
   if (objProgress() >= S.board.objective.target) { boardWon(); return true; }
   if (S.turn >= turnLimit()) {
@@ -944,7 +1004,7 @@ function showResult(title, text, btnLabel, action) {
 // ---------- rewards ----------
 function buildRewardOffers() {
   const offers = [];
-  const unowned = shuffle(Object.keys(ARTIFACTS).filter(id => !hasArt(id)));
+  const unowned = shuffle(artifactPool('reward'));
   const specs = shuffle(Object.keys(SPECIALS));
   if (unowned[0]) offers.push({ kind: 'artifact', id: unowned[0] });
   offers.push({ kind: 'special', id: specs[0] });
@@ -1025,7 +1085,8 @@ function renderHand() {
     el.className = 'card'
       + (c.spec ? ' special' : '')
       + (S.selected === i && !S.pendingDiscard ? ' selected' : '');
-    el.innerHTML = `<div class="val">${c.value}</div>` + (c.spec ? `<div class="name">${SPECIALS[c.spec].name}</div>` : '');
+    const dirMark = c.dir === 1 ? '<div class="cdir">↻</div>' : c.dir === -1 ? '<div class="cdir ccw">↺</div>' : '';
+    el.innerHTML = `<div class="val">${c.value}</div>` + (c.spec ? `<div class="name">${SPECIALS[c.spec].name}</div>` : '') + dirMark;
     el.addEventListener('click', () => onCardClick(i));
     hand.appendChild(el);
   });
@@ -1054,8 +1115,9 @@ function renderHUD() {
   $('hud-board').textContent = `Board ${S.boardIndex}${S.boardIndex > 10 ? ' ∞' : ''}`;
   $('hud-turns').textContent = `Turn ${S.turn}/${turnLimit()}`;
   $('hud-coins').textContent = `🪙 ${S.coins}`;
-  $('hud-objective').textContent = objectiveText();
   $('hud-deck').textContent = `Deck ${S.draw.length} · Disc ${S.discard.length}`;
+  const o = S.board.objective;
+  $('objective-bar').textContent = `🎯 ${objectiveDesc()} (${Math.min(objProgress(), o.target)}/${o.target})`;
 }
 
 function renderAll() {
@@ -1065,6 +1127,7 @@ function renderAll() {
   renderArtifacts();
   renderHighlights();
   positionNPCs();
+  document.body.classList.toggle('pick-hand', !!S.pendingDiscard);
 }
 
 // ---------- boot ----------
@@ -1085,3 +1148,203 @@ $('btn-result').addEventListener('click', () => { if (resultAction) resultAction
 $('btn-shop-close').addEventListener('click', closeShop);
 $('btn-quest-accept').addEventListener('click', acceptQuest);
 $('btn-quest-decline').addEventListener('click', declineQuest);
+
+// ---------- hidden mode ----------
+const EGG = {
+  active: false,
+  gifs: [],       // object URLs, memory only — discarded on page close
+  order: [],      // shuffled deck of gif indices
+  pos: 0,
+  queue: [],      // pending animations {secs, isEcho}
+  playing: false,
+  totalSecs: 0,
+  startTime: 0,
+};
+
+let jszipPromise = null;
+function loadJSZip() {
+  if (window.JSZip) return Promise.resolve();
+  if (!jszipPromise) {
+    jszipPromise = new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+      s.onload = resolve;
+      s.onerror = () => { jszipPromise = null; reject(new Error('JSZip load failed')); };
+      document.head.appendChild(s);
+    });
+  }
+  return jszipPromise;
+}
+
+// activation: triple-click the draw pile chip (no visual hint, no conflicting handler)
+let eggClicks = 0, eggClickTimer = null;
+$('hud-deck').addEventListener('click', () => {
+  eggClicks++;
+  clearTimeout(eggClickTimer);
+  eggClickTimer = setTimeout(() => { eggClicks = 0; }, 600);
+  if (eggClicks >= 3) { eggClicks = 0; $('egg-file').click(); }
+});
+
+$('egg-file').addEventListener('change', e => {
+  const f = e.target.files && e.target.files[0];
+  if (f) eggLoadZip(f);
+  e.target.value = '';
+});
+
+function eggLoadUI(loaded, total, title) {
+  if (title) $('egg-load-title').textContent = title;
+  $('egg-progress-fill').style.width = total ? (loaded / total * 100) + '%' : '0%';
+  $('egg-load-count').textContent = total ? `Loading ${loaded} / ${total} files…` : '';
+}
+
+async function eggLoadZip(file) {
+  const ov = $('egg-loading');
+  ov.hidden = false; // immediate feedback, before any processing starts
+  eggLoadUI(0, 0, 'Opening collection…');
+  const preview = $('egg-preview');
+  preview.classList.remove('on');
+  let previewTimer = null, previewIdx = 0;
+  const fresh = [];
+  try {
+    await loadJSZip();
+    const zip = await JSZip.loadAsync(file);
+    const entries = Object.values(zip.files).filter(f => !f.dir && /\.gif$/i.test(f.name));
+    if (!entries.length) {
+      eggLoadUI(0, 0, 'No animations found in that file.');
+      setTimeout(() => { ov.hidden = true; }, 1800);
+      return;
+    }
+    eggLoadUI(0, entries.length, 'Loading collection…');
+    previewTimer = setInterval(() => {
+      if (fresh.length) {
+        preview.src = fresh[previewIdx % fresh.length];
+        preview.classList.add('on');
+        previewIdx++;
+      }
+    }, 5000);
+    let loaded = 0;
+    for (const entry of entries) {
+      const blob = await entry.async('blob');
+      fresh.push(URL.createObjectURL(new Blob([blob], { type: 'image/gif' })));
+      loaded++;
+      eggLoadUI(loaded, entries.length);
+      if (loaded === 1) { preview.src = fresh[0]; preview.classList.add('on'); previewIdx = 1; }
+    }
+    EGG.gifs.forEach(u => URL.revokeObjectURL(u));
+    EGG.gifs = fresh.slice();
+    EGG.order = shuffle(EGG.gifs.map((_, i) => i));
+    EGG.pos = 0;
+    if (!EGG.active) eggActivate();
+    eggLoadUI(EGG.gifs.length, EGG.gifs.length, `Ready! ${EGG.gifs.length} animations loaded`);
+    $('egg-load-count').textContent = '';
+    setTimeout(() => { ov.hidden = true; }, 1400);
+  } catch (err) {
+    fresh.forEach(u => URL.revokeObjectURL(u));
+    eggLoadUI(0, 0, 'Could not read that file.');
+    setTimeout(() => { ov.hidden = true; }, 1800);
+  } finally {
+    clearInterval(previewTimer);
+  }
+}
+
+function eggActivate() {
+  EGG.active = true;
+  EGG.totalSecs = 0;
+  EGG.startTime = Date.now();
+  document.body.classList.add('egg');
+  $('btn-ilost').hidden = false;
+}
+
+// gif deck: every gif plays once before any repeats, then reshuffle
+function eggDrawGif() {
+  if (EGG.pos >= EGG.order.length) { shuffle(EGG.order); EGG.pos = 0; }
+  return EGG.gifs[EGG.order[EGG.pos++]];
+}
+
+// coin-change trigger: duration in seconds = |coin delta|, no minimum floor
+function eggCoinGif(delta) {
+  if (!EGG.active || !EGG.gifs.length || !delta) return;
+  let secs = Math.abs(delta);
+  if (delta < 0 && hasArt('egg_chain')) secs = Math.ceil(secs * 1.5);
+  if (hasArt('egg_hourglass')) secs += 3;
+  if (hasArt('egg_die')) secs += rand(0, 4);
+  eggEnqueue(secs, false);
+}
+
+// NPC-encounter bonus animation (Siren's Bell)
+function eggBonusGif() {
+  if (!EGG.active || !EGG.gifs.length || !hasArt('egg_bell')) return;
+  let secs = rand(4, 7);
+  if (hasArt('egg_hourglass')) secs += 3;
+  eggEnqueue(secs, false);
+}
+
+function eggEnqueue(secs, isEcho) {
+  EGG.queue.push({ secs, isEcho });
+  eggPlayNext();
+}
+
+function eggPlayNext() {
+  if (EGG.playing || !EGG.queue.length) return;
+  EGG.playing = true;
+  const item = EGG.queue.shift();
+  const wrap = $('egg-gif-img');
+  wrap.innerHTML = '';
+  const img = document.createElement('img');
+  img.src = eggDrawGif();
+  wrap.appendChild(img);
+  $('egg-gif-secs').textContent = ''; // no countdown while it plays
+  $('egg-gif').hidden = false;
+  $('btn-ilost').hidden = true;
+  EGG.totalSecs += item.secs;
+  const ms = item.secs * 1000;
+  setTimeout(() => { $('egg-gif-secs').textContent = item.secs + 's'; }, Math.max(0, ms - 500));
+  setTimeout(() => {
+    EGG.playing = false;
+    if (!item.isEcho && hasArt('egg_prism') && Math.random() < 0.25) {
+      EGG.queue.unshift({ secs: item.secs, isEcho: true });
+    }
+    if (EGG.queue.length) {
+      eggPlayNext();
+    } else {
+      $('egg-gif').hidden = true;
+      $('egg-gif-img').innerHTML = '';
+      if (EGG.active) $('btn-ilost').hidden = false;
+    }
+  }, ms);
+}
+
+// "I lost" — personal session data, framed plainly
+const fmtTime = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+
+$('btn-ilost').addEventListener('click', () => {
+  const cur = {
+    boards: S ? S.boardIndex : 0,
+    gif: Math.round(EGG.totalSecs),
+    dur: Math.floor((Date.now() - EGG.startTime) / 1000),
+  };
+  const prev = saveData.alt || null;
+  const bestLine = prev
+    ? `Best so far — boards: ${prev.boards} · animation time: ${fmtTime(prev.gif)} · session: ${fmtTime(prev.dur)}`
+    : 'This is your first recorded session.';
+  $('egg-stats-text').innerHTML =
+    `Boards reached: <b>${cur.boards}</b><br>` +
+    `Animation time: <b>${fmtTime(cur.gif)}</b><br>` +
+    `Session length: <b>${fmtTime(cur.dur)}</b><br><br>` +
+    `<span class="small">${bestLine}</span>`;
+  saveData.alt = {
+    boards: Math.max(prev ? prev.boards : 0, cur.boards),
+    gif: Math.max(prev ? prev.gif : 0, cur.gif),
+    dur: Math.max(prev ? prev.dur : 0, cur.dur),
+  };
+  try { localStorage.setItem('looptrail', JSON.stringify(saveData)); } catch (e) {}
+  $('egg-stats').hidden = false;
+});
+
+$('btn-egg-continue').addEventListener('click', () => { $('egg-stats').hidden = true; });
+$('btn-egg-newrun').addEventListener('click', () => {
+  $('egg-stats').hidden = true;
+  EGG.totalSecs = 0;
+  EGG.startTime = Date.now();
+  startRun();
+});
