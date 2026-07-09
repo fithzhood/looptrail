@@ -1227,32 +1227,35 @@ async function eggLoadZip(file) {
   eggLoadUI(0, 0, 'Opening collection…');
   const preview = $('egg-preview');
   preview.classList.remove('on');
-  let previewTimer = null, previewIdx = 0;
+  let previewTimer = null, lastPrev = -1;
+  const showPreview = pool => {
+    if (!pool.length) return;
+    let i = rand(0, pool.length - 1);
+    if (pool.length > 1 && i === lastPrev) i = (i + 1) % pool.length;
+    lastPrev = i;
+    preview.src = pool[i];
+    preview.classList.add('on');
+  };
   const fresh = [];
   try {
     await loadJSZip();
     const zip = await JSZip.loadAsync(file);
-    const entries = Object.values(zip.files).filter(f => !f.dir && /\.gif$/i.test(f.name));
+    // shuffled so every load extracts (and previews) in a different order
+    const entries = shuffle(Object.values(zip.files).filter(f => !f.dir && /\.gif$/i.test(f.name)));
     if (!entries.length) {
       eggLoadUI(0, 0, 'No animations found in that file.');
       setTimeout(() => { ov.hidden = true; }, 1800);
       return;
     }
     eggLoadUI(0, entries.length, 'Loading collection…');
-    previewTimer = setInterval(() => {
-      if (fresh.length) {
-        preview.src = fresh[previewIdx % fresh.length];
-        preview.classList.add('on');
-        previewIdx++;
-      }
-    }, 5000);
+    previewTimer = setInterval(() => showPreview(fresh), 5000);
     let loaded = 0;
     for (const entry of entries) {
       const blob = await entry.async('blob');
       fresh.push(URL.createObjectURL(new Blob([blob], { type: 'image/gif' })));
       loaded++;
       eggLoadUI(loaded, entries.length);
-      if (loaded === 1) { preview.src = fresh[0]; preview.classList.add('on'); previewIdx = 1; }
+      if (loaded === 1) showPreview(fresh);
     }
     EGG.gifs.forEach(u => URL.revokeObjectURL(u));
     EGG.gifs = fresh.slice();
