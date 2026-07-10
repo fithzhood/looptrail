@@ -19,14 +19,14 @@ const ARTIFACTS = {
   satchel:   { name: 'Deep Satchel',      icon: '🎒', desc: '+1 max hand size.', shopOnly: true },
   quill:     { name: 'Oaken Quill',       icon: '🪶', desc: 'Draw an extra card each turn (up to your hand limit).', shopOnly: true },
   bond:      { name: "Merchant's Bond",   icon: '🧰', desc: 'A heavy strongbox: −1 max hand size while you carry it. The merchant buys it back at TRIPLE price when you complete the board.', shopOnly: true, refund3x: true },
-  clover:    { name: 'Lucky Clover',      icon: '🍀', desc: '+1 coin whenever you gain coins.' },
-  idol:      { name: 'Green Idol',        icon: '🗿', desc: '+2 coins each time you complete a lap.' },
+  clover:    { name: 'Lucky Clover',      icon: '🍀', desc: '+1 coin whenever you gain coins. Lasts 3 boards.', charges: 3 },
+  idol:      { name: 'Green Idol',        icon: '🗿', desc: '+2 coins each time you complete a lap. Lasts 3 boards.', charges: 3 },
   hourglass: { name: 'Patient Hourglass', icon: '⏳', desc: '+2 turn limit on every board.' },
-  charm:     { name: 'Thief Charm',       icon: '🧿', desc: 'Thieves steal only half as much from you.' },
+  charm:     { name: 'Thief Charm',       icon: '🧿', desc: 'Thieves steal only half as much from you. Lasts 3 boards.', charges: 3 },
   ring:      { name: 'Bargain Ring',      icon: '💍', desc: 'Merchant prices reduced by 2 (min 1).' },
   seal:      { name: 'Quest Seal',        icon: '📜', desc: '+3 coins from every quest reward.' },
-  compass:   { name: 'Old Compass',       icon: '🧭', desc: 'Gust tiles no longer restrict your direction.' },
-  bell:      { name: 'Warning Bell',      icon: '🔔', desc: 'Hidden thief traps are revealed to you.' },
+  compass:   { name: 'Old Compass',       icon: '🧭', desc: 'Gust tiles no longer restrict your direction. Lasts 3 boards.', charges: 3 },
+  bell:      { name: 'Warning Bell',      icon: '🔔', desc: 'Hidden thief traps are revealed to you. Lasts 3 boards.', charges: 3 },
   // hidden-mode exclusives — they shape the animation system, nothing else
   egg_hourglass: { name: 'Hourglass of Indulgence', icon: '⌛', desc: 'Every animation lasts 3 seconds longer.', egg: true },
   egg_bell:      { name: "Siren's Bell",            icon: '🛎️', desc: 'Meeting any NPC plays a bonus animation.', egg: true },
@@ -34,6 +34,11 @@ const ARTIFACTS = {
   egg_chain:     { name: 'Gilded Chain',            icon: '⛓️', desc: 'Coin losses play animations half again as long.', egg: true },
   egg_die:       { name: 'Velvet Die',              icon: '🎲', desc: 'Every animation gains 0–4 bonus seconds, rolled each time.', egg: true },
 };
+
+function gainArtifact(id) {
+  S.artifacts.push(id);
+  if (ARTIFACTS[id].charges) S.artCharges[id] = ARTIFACTS[id].charges;
+}
 
 function artifactPool(src) {
   // src: 'tile' | 'shop' | 'reward'
@@ -51,7 +56,7 @@ const SPECIALS = {
   charge: { value: 6, name: 'Charge',    desc: 'Move 6 tiles — clockwise only.' },
   cycle:  { value: 1, name: 'Cycle',     desc: 'Draw a card and discard a card, then move 1.' },
   sneak:  { value: 2, name: 'Soft Step', desc: 'Move 2 without triggering the tile you land on.' },
-  stride: { value: 3, name: 'Stride',    desc: 'Move 3, then draw a card.' },
+  stride: { value: 3, name: 'Stride',    desc: 'Move 3, then draw a card.', shopOnly: true },
 };
 
 const PAWN_SVG = `
@@ -198,6 +203,7 @@ function startRun() {
     lapsPaid: 0,
     coins: 5,
     artifacts: [],
+    artCharges: {},   // boards left for charge-limited artifacts
     questsDone: 0,
     draw: shuffle(startingDeck()),
     discard: [],
@@ -437,10 +443,22 @@ function renderTiles() {
     const shownType = hiddenTrap && !hasArt('bell') ? 'blank' : t.type;
     el.className = 'tile t-' + shownType + (t.used ? ' used' : '');
     let icon = TILE_ICONS[shownType] || '';
-    if (t.type === 'loss' && t.half) icon = '💀';
     if (t.type === 'trap' && t.used) icon = '⚠️';
     if (hiddenTrap && hasArt('bell')) { icon = '⚠️'; el.classList.add('revealed'); }
-    el.innerHTML = icon ? `<span>${icon}</span>` : '';
+    if (shownType === 'coin') {
+      el.innerHTML = `<span class="coin-disc">${t.amt}</span>`;
+    } else if (shownType === 'loss') {
+      el.innerHTML = `<span class="loss-pit">${t.half ? '½' : '−' + t.amt}</span>`;
+    } else {
+      el.innerHTML = icon ? `<span>${icon}</span>` : '';
+    }
+    // visit objective: stamp the tiles you have already stepped on
+    if (S.board.objective.type === 'visit' && S.visited.has(i)) {
+      const v = document.createElement('div');
+      v.className = 'v-badge';
+      v.textContent = '✓';
+      el.appendChild(v);
+    }
     if (S.quest) {
       if (S.quest.type === 'relay') {
         S.quest.targets.forEach((ti, k) => {
@@ -564,6 +582,32 @@ function moveTo(tile, netDelta) {
   renderHUD();
 }
 
+// ---------- event notices (queued, tap to skip) ----------
+const NOTICES = { queue: [], showing: false, timer: null };
+
+function showNotice(icon, title, text) {
+  NOTICES.queue.push({ icon, title, text });
+  pumpNotice();
+}
+
+function pumpNotice() {
+  if (NOTICES.showing || !NOTICES.queue.length) return;
+  NOTICES.showing = true;
+  const n = NOTICES.queue.shift();
+  $('notice-icon').textContent = n.icon;
+  $('notice-title').textContent = n.title;
+  $('notice-text').textContent = n.text;
+  $('notice').hidden = false;
+  NOTICES.timer = setTimeout(closeNotice, 2600);
+}
+
+function closeNotice() {
+  clearTimeout(NOTICES.timer);
+  $('notice').hidden = true;
+  NOTICES.showing = false;
+  setTimeout(pumpNotice, 220);
+}
+
 // floating effect text above a tile
 function floatText(tile, txt, cls) {
   const { x, y } = tileCenter(tile);
@@ -613,8 +657,10 @@ function updateLaps() {
 // ---------- tile resolution ----------
 function resolveLanding(dir, depth, sneak) {
   if (S.over) return;
+  // quest progress counts EVERY landing, including intermediate ones (slide/ferry hops)
+  checkQuestAt(S.pos);
   const t = S.board.tiles[S.pos];
-  const done = () => { checkQuestAt(S.pos); afterEffects(); };
+  const done = () => afterEffects();
 
   if (sneak) {
     addMsg('✧ Soft Step — the tile does not trigger.');
@@ -642,9 +688,10 @@ function resolveLanding(dir, depth, sneak) {
         S.boardArts++;
         if (unowned.length) {
           const id = pick(unowned);
-          S.artifacts.push(id);
+          gainArtifact(id);
           addMsg(`🏺 Found artifact: ${ARTIFACTS[id].icon} ${ARTIFACTS[id].name}!`);
           floatText(S.pos, ARTIFACTS[id].icon, 'good');
+          showNotice(ARTIFACTS[id].icon, `Artifact found: ${ARTIFACTS[id].name}`, ARTIFACTS[id].desc);
         } else {
           addMsg('🏺 The urn holds 3 coins.');
           floatText(S.pos, '+3 🪙', 'good');
@@ -700,6 +747,7 @@ function resolveLanding(dir, depth, sneak) {
         ensureThiefEl();
         addMsg('⚠️ A hidden trap! A thief appears across the board and starts hunting you.');
         floatText(S.pos, '⚠️', 'bad');
+        showNotice('🥷', 'A thief appears!', 'You sprang a hidden trap — a thief now hunts you around the loop. Catch it for a bounty, or keep your distance.');
       }
       break;
     case 'ferry': {
@@ -857,6 +905,7 @@ function completeQuest() {
   if (gt && gt.type === 'quest') { gt.done = true; gt.used = true; }
   addMsg(`★ Quest complete! +${q.reward} coins.`);
   floatText(S.pos, `+${q.reward} 🪙`, 'good');
+  showNotice('★', 'Quest complete!', `The quest giver pays you ${q.reward} coins${hasArt('seal') ? ' (+3 from the Quest Seal)' : ''}.`);
   renderTiles();
   addCoins(q.reward, 'quest');
 }
@@ -938,7 +987,7 @@ function buyItem(i) {
   S.coins -= p;
   eggCoinGif(-p);
   if (item.kind === 'artifact') {
-    S.artifacts.push(item.id);
+    gainArtifact(item.id);
     S.boardArts++;
     S.purchases.push({ kind: 'artifact', id: item.id, cost: p });
     addMsg(`Bought ${ARTIFACTS[item.id].icon} ${ARTIFACTS[item.id].name} (refunded on board win).`);
@@ -970,6 +1019,7 @@ function refundPurchases() {
     eggCoinGif(value); // one animation per refunded item, sized to its own value
     if (pu.kind === 'artifact') {
       S.artifacts = S.artifacts.filter(id => id !== pu.id);
+      delete S.artCharges[pu.id];
     } else {
       for (const pile of [S.draw, S.discard, S.hand]) {
         const k = pile.indexOf(pu.card);
@@ -995,9 +1045,24 @@ function checkBoardEnd() {
 function boardWon() {
   S.over = true;
   const refundNote = refundPurchases();
+  // charge-limited artifacts burn one charge per completed board
+  let expiredNote = '';
+  for (const id of [...S.artifacts]) {
+    if (!ARTIFACTS[id].charges) continue;
+    S.artCharges[id] = (S.artCharges[id] || 1) - 1;
+    if (S.artCharges[id] <= 0) {
+      S.artifacts = S.artifacts.filter(a => a !== id);
+      delete S.artCharges[id];
+      S.coins += 5;
+      eggCoinGif(5);
+      expiredNote += ` ⏳ ${ARTIFACTS[id].name} ran out of charge and was returned for 5 coins.`;
+      showNotice(ARTIFACTS[id].icon, `${ARTIFACTS[id].name} exhausted`, 'Its charge ran out — the spirits of the trail buy it back for 5 coins.');
+    }
+  }
   saveBest(S.boardIndex);
   renderAll();
-  showReward(refundNote);
+  showNotice('🏁', `Board ${S.boardIndex} complete!`, `${objectiveDesc()} Done with ${turnLimit() - S.turn} turn(s) to spare.`);
+  showReward(refundNote + expiredNote);
 }
 
 function runLost(reason) {
@@ -1028,7 +1093,7 @@ function showResult(title, text, btnLabel, action) {
 function buildRewardOffers() {
   const offers = [];
   const unowned = shuffle(artifactPool('reward'));
-  const specs = shuffle(Object.keys(SPECIALS));
+  const specs = shuffle(Object.keys(SPECIALS).filter(id => !SPECIALS[id].shopOnly));
   if (unowned[0]) offers.push({ kind: 'artifact', id: unowned[0] });
   offers.push({ kind: 'special', id: specs[0] });
   if (unowned[1] && Math.random() < 0.5) offers.push({ kind: 'artifact', id: unowned[1] });
@@ -1067,7 +1132,7 @@ function showReward(refundNote) {
     btn.className = 'btn';
     btn.textContent = 'Take';
     btn.addEventListener('click', () => {
-      if (offer.kind === 'artifact') S.artifacts.push(offer.id);
+      if (offer.kind === 'artifact') gainArtifact(offer.id);
       else if (offer.kind === 'special') S.discard.push({ value: SPECIALS[offer.id].value, spec: offer.id });
       else S.discard.push({ value: offer.value });
       nextBoard();
@@ -1129,8 +1194,10 @@ function renderArtifacts() {
     const a = ARTIFACTS[id];
     const chip = document.createElement('div');
     chip.className = 'artifact-chip' + (S.purchases.some(p => p.kind === 'artifact' && p.id === id) ? ' bought' : '');
-    chip.textContent = a.icon;
-    chip.addEventListener('click', () => addMsg(`${a.icon} <b>${a.name}</b> — ${a.desc}`));
+    const left = S.artCharges[id];
+    chip.innerHTML = a.icon + (left ? `<span class="charge">${left}</span>` : '');
+    chip.addEventListener('click', () =>
+      setMsg(`${a.icon} <b>${a.name}</b> — ${a.desc}${left ? ` <b>(${left} board${left > 1 ? 's' : ''} left)</b>` : ''}`));
     shelf.appendChild(chip);
   });
 }
@@ -1172,6 +1239,7 @@ $('btn-result').addEventListener('click', () => { if (resultAction) resultAction
 $('btn-shop-close').addEventListener('click', closeShop);
 $('btn-quest-accept').addEventListener('click', acceptQuest);
 $('btn-quest-decline').addEventListener('click', declineQuest);
+$('notice').addEventListener('click', closeNotice);
 
 // ---------- hidden mode ----------
 const EGG = {
@@ -1325,7 +1393,7 @@ function eggPlayNext() {
   $('btn-ilost').hidden = true;
   EGG.totalSecs += item.secs;
   const ms = item.secs * 1000;
-  setTimeout(() => { $('egg-gif-secs').textContent = item.secs + 's'; }, Math.max(0, ms - 500));
+  setTimeout(() => { $('egg-gif-secs').textContent = item.secs + 's'; }, Math.max(0, ms - 1500));
   setTimeout(() => {
     EGG.playing = false;
     if (!item.isEcho && hasArt('egg_prism') && Math.random() < 0.25) {

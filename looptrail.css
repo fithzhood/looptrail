@@ -148,6 +148,59 @@ body.egg #center-msg {
   filter: drop-shadow(0 1px 1px rgba(58, 47, 27, .4));
   line-height: 1;
 }
+
+/* drawn coin with the amount inside */
+.tile > .coin-disc {
+  width: 68%;
+  height: 68%;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #ffe98a, #e3b53e 60%, #b8860b);
+  border: 2px solid #8a6d1a;
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, .45), 0 1px 2px rgba(58, 47, 27, .4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: calc(var(--tile-size, 44px) * .32);
+  font-weight: bold;
+  color: #5e4a10;
+  filter: none;
+}
+
+/* drawn pit with the amount lost inside */
+.tile > .loss-pit {
+  width: 70%;
+  height: 70%;
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 38%, #4a3826, #241a0e 65%, #0e0a05);
+  border: 2px solid #57422c;
+  box-shadow: inset 0 3px 6px rgba(0, 0, 0, .8), 0 1px 2px rgba(58, 47, 27, .35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: calc(var(--tile-size, 44px) * .3);
+  font-weight: bold;
+  color: #ff9e8a;
+  filter: none;
+}
+
+/* visit objective: already-visited stamp */
+.v-badge {
+  position: absolute;
+  bottom: -7px;
+  right: -7px;
+  background: var(--green);
+  color: #fff;
+  border: 1px solid var(--gold);
+  border-radius: 50%;
+  width: 18px;
+  height: 18px;
+  font-size: 12px;
+  font-weight: bold;
+  line-height: 16px;
+  text-align: center;
+  z-index: 6;
+}
+body.egg .v-badge { background: #7a3496; border-color: #ff9e5e; }
 .tile.t-start {
   background: linear-gradient(155deg, #ffe9a0, #e3bc4e);
   border-color: #8a6d1a;
@@ -451,12 +504,28 @@ body.egg #objective-bar {
   min-height: 0;
 }
 .artifact-chip {
+  position: relative;
   background: #efe2f5;
   border: 2px solid #6d4d8a;
   border-radius: 8px;
   padding: 2px 8px;
   font-size: 15px;
   cursor: pointer;
+}
+.artifact-chip .charge {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  background: var(--gold);
+  color: var(--ink);
+  border: 1px solid var(--ink);
+  border-radius: 50%;
+  width: 16px;
+  height: 16px;
+  font-size: 11px;
+  font-weight: bold;
+  line-height: 14px;
+  text-align: center;
 }
 .artifact-chip.bought { border-style: dashed; }
 
@@ -625,6 +694,53 @@ body.egg .tile.reachable {
 }
 body.egg #board::before { border-color: rgba(142, 47, 60, .55); }
 
+/* event notices */
+#notice {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgba(46, 36, 18, .32);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  cursor: pointer;
+}
+#notice[hidden] { display: none; }
+#notice-card {
+  background: var(--parchment);
+  border: 3px solid var(--gold);
+  outline: 2px solid var(--green);
+  outline-offset: -8px;
+  border-radius: 14px;
+  padding: 20px 24px 12px;
+  max-width: 340px;
+  text-align: center;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, .4);
+  animation: notice-pop .25s ease;
+}
+@keyframes notice-pop {
+  0% { transform: scale(.82); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
+}
+#notice-icon { font-size: 40px; line-height: 1.1; }
+#notice-title {
+  font-size: 20px;
+  font-weight: bold;
+  color: var(--green);
+  margin: 6px 0 4px;
+}
+#notice-text { font-size: 14px; line-height: 1.4; }
+#notice-hint {
+  font-size: 11px;
+  font-style: italic;
+  color: #6b5b35;
+  margin-top: 10px;
+}
+body.egg #notice-card { background: #1b1024; border-color: #8e2f3c; outline-color: #5c2472; color: #e6d5c3; }
+body.egg #notice-title { color: #e0a9ff; }
+body.egg #notice-hint { color: #b89ac6; }
+
 /* hidden-mode chrome */
 #btn-ilost {
   position: fixed;
@@ -699,10 +815,13 @@ body.egg #board::before { border-color: rgba(142, 47, 60, .55); }
 #egg-gif-img img { object-fit: contain; }
 #egg-gif-secs {
   position: absolute;
-  right: 12px;
-  bottom: calc(env(safe-area-inset-bottom, 0px) + 10px);
-  font-size: 13px;
-  color: rgba(255, 255, 255, .65);
+  left: 50%;
+  transform: translateX(-50%);
+  top: calc(env(safe-area-inset-top, 0px) + 14px);
+  font-size: 21px;
+  font-weight: bold;
+  color: rgba(255, 255, 255, .85);
+  text-shadow: 0 1px 4px rgba(0, 0, 0, .8);
   z-index: 301;
 }
 
