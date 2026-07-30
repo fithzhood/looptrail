@@ -211,6 +211,27 @@ body.egg #center-msg {
   filter: none;
 }
 
+/* tally stone: the running stake, gain or loss unknown */
+.tile > .tally-stone {
+  width: 74%;
+  height: 74%;
+  border-radius: 26%;
+  background: linear-gradient(155deg, #8e8175, #5b5148 70%);
+  border: 2px solid #3c352e;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.28), 0 1px 2px rgba(58,47,27,.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: calc(var(--tile-size, 44px) * .3);
+  font-weight: bold;
+  color: #ffe9a0;
+  filter: none;
+}
+.tile.t-tally { background: linear-gradient(155deg, #e2ddd4, #bdb5a8); border-color: #5b5148; }
+body.egg .tile.t-tally { background: linear-gradient(155deg, #2e2833, #201b26); border-color: #6b5f74; }
+.tile.t-leech { background: linear-gradient(155deg, #ddd2e6, #b39fc4); border-color: #5c3a72; }
+body.egg .tile.t-leech { background: linear-gradient(155deg, #2c1a38, #1d1026); border-color: #7a4c96; }
+
 /* visit objective: already-visited stamp */
 .v-badge {
   position: absolute;
@@ -307,6 +328,28 @@ body.egg .v-badge { background: #7a3496; border-color: #ff9e5e; }
   border-color: #14100c;
   box-shadow: inset 0 0 0 2px rgba(255,255,255,.15), 0 2px 4px rgba(0,0,0,.45);
   transform: translate(-30%, 30%);
+}
+/* carrying your coins: gold rim and the amount it owes you */
+.npc.thief.loaded {
+  border-color: var(--gold-bright);
+  box-shadow: 0 0 0 2px rgba(255, 217, 94, .5), 0 2px 4px rgba(0,0,0,.45);
+}
+.npc.thief .loot {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  background: var(--gold-bright);
+  color: #3a2f1b;
+  border: 1px solid #6e5410;
+  border-radius: 999px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 3px;
+  font-size: 11px;
+  font-weight: bold;
+  line-height: 15px;
+  text-align: center;
+  font-family: Georgia, serif;
 }
 
 /* reachable highlight — must be unmistakable */

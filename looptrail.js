@@ -19,15 +19,15 @@ const ARTIFACTS = {
   satchel:   { name: 'Deep Satchel',      icon: '🎒', desc: '+1 max hand size.', shopOnly: true },
   quill:     { name: 'Oaken Quill',       icon: '🪶', desc: 'Draw an extra card each turn (up to your hand limit).', shopOnly: true },
   bond:      { name: "Merchant's Bond",   icon: '🧰', desc: 'A heavy strongbox: −1 max hand size while you carry it. The merchant buys it back at TRIPLE price when you complete the board.', shopOnly: true, refund3x: true },
-  clover:    { name: 'Lucky Clover',      icon: '🍀', desc: '+1 coin whenever you gain coins.', charges: 3 },
-  idol:      { name: 'Green Idol',        icon: '🗿', desc: '+2 coins each time you complete a lap.', charges: 3 },
+  clover:    { name: 'Lucky Clover',      icon: '🍀', desc: '+1 coin whenever you gain coins (+2 while overcharged). Gains a charge on every quest you complete.', charges: 3 },
+  idol:      { name: 'Green Idol',        icon: '🗿', desc: '+2 coins each time you complete a lap (+3 while overcharged), and every lap feeds it a charge.', charges: 3 },
   hourglass: { name: 'Patient Hourglass', icon: '⏳', desc: '+2 turn limit on every board.' },
-  charm:     { name: 'Thief Charm',       icon: '🧿', desc: 'Thieves steal only half as much from you.', charges: 3 },
+  charm:     { name: 'Thief Charm',       icon: '🧿', desc: 'Thieves steal only half as much from you. Recovering your stolen purse feeds it a charge.', charges: 3 },
   ring:      { name: 'Bargain Ring',      icon: '💍', desc: 'Merchant prices reduced by 2 (min 1).' },
   seal:      { name: 'Quest Seal',        icon: '📜', desc: '+3 coins from every quest reward.' },
   compass:   { name: 'Old Compass',       icon: '🧭', desc: 'Gust tiles no longer restrict your direction.', charges: 3 },
   bell:      { name: 'Warning Bell',      icon: '🔔', desc: 'Hidden thief traps are revealed to you.', charges: 3 },
-  map:       { name: "Cartographer's Map", icon: '🗺️', desc: '+1 coin whenever you step on a tile you have already visited.', charges: 3 },
+  map:       { name: "Cartographer's Map", icon: '🗺️', desc: '+1 coin whenever you step on a tile you have already visited (+2 while overcharged).', charges: 3 },
   warden:    { name: 'Warden Sigil',      icon: '🛡️', desc: 'While it holds, no other artifact spends charges — only the sigil itself.', charges: 3 },
   coffer:    { name: "Smuggler's Coffer", icon: '🧳', desc: 'On board completion you may keep a purchase instead of refunding it. Each item kept spends a charge.', charges: 3 },
   anchor:    { name: 'Iron Anchor',       icon: '⚓', desc: 'Slides and ferries become optional — you choose whether to be carried.' },
@@ -43,6 +43,15 @@ const ARTIFACTS = {
 
 // artifacts that can hold charges; charge 0 is still a valid charge pool
 const holdsCharges = id => ARTIFACTS[id].charges != null;
+// stocked past its starting charge, a relic works harder
+const overcharged = id => hasArt(id) && (S.artCharges[id] || 0) > ARTIFACTS[id].charges;
+
+// feed a charge to a relic that thrives on a particular deed
+function feedCharge(id) {
+  if (!hasArt(id) || !holdsCharges(id)) return;
+  S.artCharges[id] = (S.artCharges[id] || 0) + 1;
+  floatText(S.pos, `${ARTIFACTS[id].icon}+`, 'good');
+}
 
 function addCharges(n) {
   const touched = S.artifacts.filter(holdsCharges);
@@ -84,7 +93,8 @@ const SPECIALS = {
 
 // Merchant's Pace grows with the board clock; everything else is fixed
 const cardValue = c => c.spec === 'pace' ? Math.max(1, S.turn) : c.value;
-const isGlass = c => !!(c.spec && SPECIALS[c.spec].glass);
+const isGlass = c => !!(c.glass || (c.spec && SPECIALS[c.spec].glass));
+const cardName = c => c.spec ? SPECIALS[c.spec].name : `${c.value}`;
 const glassOdds = () => hasArt('resin') ? 0.05 : 0.25;
 
 const PAWN_SVG = `
@@ -107,7 +117,7 @@ const PAWN_SVG = `
 const TILE_ICONS = {
   start: '⌂', blank: '', coin: '🪙', loss: '🕳', artifact: '🏺',
   draw: '🃏', discard: '✂️', slide: '➤', gust: '🌀', quest: '★', trap: '', ferry: '⛵',
-  boon: '⏱️', haste: '⌛',
+  boon: '⏱️', haste: '⌛', leech: '🕷️',
 };
 
 function startingDeck() {
@@ -147,6 +157,7 @@ function makeBoard(b) {
   const types = ['laps', 'coins', 'arts', 'quests', 'survive', 'visit', 'home', 'purity'];
   if (S && S.coins >= 10) types.push('spend'); // needs a purse worth halving
   if (S) types.push('precision');
+  if (EGG.active && EGG.gifs.length) types.push('film');
   const type = pick(types.filter(t => t !== lastType));
 
   let target, limit;
@@ -161,21 +172,24 @@ function makeBoard(b) {
     case 'spend':   target = Math.round(S.coins / 2);          limit = 12 + Math.floor(b / 2); break;
     case 'purity':  target = b < 6 ? 1 : 2;                    limit = target * Math.ceil(size / 3) + 8; break;
     case 'precision': target = Math.max(3, S.coins + rand(4, 10)); limit = 14 + Math.floor(b / 2); break;
+    case 'film':    target = 12 + 4 * b;                       limit = 14 + Math.floor(b / 2); break;
   }
   if (easy) limit += 2;
   const objective = { type, target };
 
   // tile bag: objective-critical tiles first, extras trimmed to fit
   const hell = type === 'survive'; // survival boards are meant to be brutal
-  // coin values climb every board: 1-2 on board 1, 2-3 on board 2, and so on
+  // coin values climb every board: 1-2 on board 1, 2-3 on board 2, and so on.
+  // Boards that ask something of the purse get a wider spread so the target is reachable.
   const lo = Math.min(b, 14);
-  const coinAmt = () => rand(lo, lo + 1);
-  const lossAmt = () => rand(lo, lo + 1) + (hell ? 1 : 0);
+  const moneyBoard = type === 'coins' || type === 'spend' || type === 'precision';
+  const coinAmt = () => moneyBoard ? rand(lo, lo + 3) : rand(lo, lo + 1);
+  const lossAmt = () => moneyBoard ? rand(lo, lo + 2) : rand(lo, lo + 1);
   const crit = [], extra = [];
   const add = (list, tile, n) => { for (let i = 0; i < n; i++) list.push({ ...tile }); };
   const addEach = (list, make, n) => { for (let i = 0; i < n; i++) list.push(make()); };
-  addEach(crit, () => ({ type: 'coin', amt: coinAmt() }), (type === 'coins' ? 5 : 2) + Math.floor(size / 20));
-  add(crit, { type: 'coin', amt: lo + 3 }, 1);
+  addEach(crit, () => ({ type: 'coin', amt: coinAmt() }), moneyBoard ? 5 : 2);
+  if (moneyBoard) add(crit, { type: 'coin', amt: lo + 3 }, 1);
   add(crit, { type: 'artifact' }, type === 'arts' ? target + 1 : 1);
   add(crit, { type: 'draw' }, 1);
   // quest givers show up on most boards now, not just the ones that demand quests
@@ -186,9 +200,11 @@ function makeBoard(b) {
     add(crit, { type: 'trap' }, 3 + (b > 5 ? 1 : 0));
   } else {
     // a purity board is seeded with more tolls to dodge, but not a gauntlet
-    addEach(extra, () => ({ type: 'loss', amt: lossAmt() }), 2 + Math.floor(b / 3) + (type === 'purity' ? 2 : 0));
+    addEach(extra, () => ({ type: 'loss', amt: lossAmt() }), 3 + Math.floor(b / 3) + (type === 'purity' ? 2 : 0));
     add(extra, { type: 'trap' }, 1 + (b > 5 ? 1 : 0));
   }
+  add(extra, { type: 'tally' }, 1);
+  add(extra, { type: 'leech' }, b > 2 ? 1 : 0);
   // time tiles: one grants turns, one sells them for coins
   add(crit, { type: 'boon', amt: 2 }, 1);
   add(extra, { type: 'boon', amt: 2 }, size > 18 ? 1 : 0);
@@ -223,6 +239,7 @@ function objectiveDesc() {
     case 'spend':   return `Spend your way down to ${o.target} coins.`;
     case 'purity':  return `Ride ${o.target} clean lap${o.target > 1 ? 's' : ''} — lose a coin and the lap restarts.`;
     case 'precision': return `Finish holding exactly ${o.target} coins.`;
+    case 'film':    return `Sit through ${o.target} seconds of animation on this board.`;
   }
 }
 
@@ -239,6 +256,7 @@ function objProgress() {
     case 'spend':   return S.coins;
     case 'purity':  return S.pureLaps;
     case 'precision': return S.coins;
+    case 'film':    return S.boardGifSecs;
   }
 }
 
@@ -254,6 +272,7 @@ function objectiveStatus() {
   const o = S.board.objective;
   if (o.type === 'spend' || o.type === 'precision' || o.type === 'coins') return `now ${S.coins} 🪙`;
   if (o.type === 'purity') return `${S.pureLaps}/${o.target}${S.lostThisLap ? ' · lap tainted' : ''}`;
+  if (o.type === 'film') return `${S.boardGifSecs}s / ${o.target}s`;
   return `${Math.min(objProgress(), o.target)}/${o.target}`;
 }
 
@@ -266,6 +285,7 @@ function startRun() {
     net: 0,
     lapsDone: 0,
     coins: 5,
+    tally: 0,         // run-wide stake carried by every tally stone
     artifacts: [],
     artCharges: {},   // boards left for charge-limited artifacts
     questsDone: 0,
@@ -290,6 +310,7 @@ function startRun() {
     echoAgain: 0,     // pending Long Echo re-triggers
     pureLaps: 0,      // laps ridden without losing a coin
     lostThisLap: false,
+    boardGifSecs: 0,  // animation seconds watched on this board
     visited: new Set([0]),
     msgs: [],
   };
@@ -325,6 +346,7 @@ function nextBoard() {
   S.echoAgain = 0;
   S.pureLaps = 0;
   S.lostThisLap = false;
+  S.boardGifSecs = 0;
   S.visited = new Set([0]);
   S.draw = shuffle(S.draw.concat(S.discard, S.hand));
   S.discard = [];
@@ -343,7 +365,7 @@ function renderMsg() { $('center-msg').innerHTML = S.msgs.map(m => `<div>${m}</d
 
 // ---------- coins ----------
 function addCoins(n, src) {
-  if (n > 0 && hasArt('clover')) n += 1;
+  if (n > 0 && hasArt('clover')) n += overcharged('clover') ? 2 : 1;
   if (n > 0 && src === 'quest' && hasArt('seal')) n += 3;
   S.coins += n;
   if (n > 0) S.boardCoins += n;
@@ -543,6 +565,8 @@ function positionNPCs() {
       th.style.left = x + '%';
       th.style.top = y + '%';
       th.style.display = '';
+      th.classList.toggle('loaded', S.thief.loot > 0);
+      th.innerHTML = S.thief.loot > 0 ? `🥷<span class="loot">${S.thief.loot}</span>` : '🥷';
     } else {
       th.style.display = 'none';
     }
@@ -553,15 +577,18 @@ function renderTiles() {
   tileEls.forEach((el, i) => {
     const t = S.board.tiles[i];
     const hiddenTrap = t.type === 'trap' && !t.used;
-    const shownType = hiddenTrap && !hasArt('bell') ? 'blank' : t.type;
+    const sensed = hasArt('bell') || t.mapped;   // bell hears them, burnt map charts them
+    const shownType = hiddenTrap && !sensed ? 'blank' : t.type;
     el.className = 'tile t-' + shownType + (t.used ? ' used' : '');
     let icon = TILE_ICONS[shownType] || '';
     if (t.type === 'trap' && t.used) icon = '⚠️';
-    if (hiddenTrap && hasArt('bell')) { icon = '⚠️'; el.classList.add('revealed'); }
+    if (hiddenTrap && sensed) { icon = '⚠️'; el.classList.add('revealed'); }
     if (shownType === 'coin') {
       el.innerHTML = `<span class="coin-disc">${t.amt}</span>`;
     } else if (shownType === 'loss') {
       el.innerHTML = `<span class="loss-pit">${t.half ? '½' : '−' + t.amt}</span>`;
+    } else if (shownType === 'tally') {
+      el.innerHTML = `<span class="tally-stone">?${S.tally + 1}</span>`;
     } else {
       el.innerHTML = icon ? `<span>${icon}</span>` : '';
     }
@@ -655,7 +682,12 @@ function tileInfo(t) {
     case 'haste':    return ['⌛ Time Broker', t.used ? 'Already traded.' : `Sells ${t.amt} of your remaining turns and pays you coins equal to the current turn number (one-time).`];
     case 'quest':    return ['★ Quest', t.done ? 'Quest completed.' : 'A quest giver — land here to hear the offer.'];
     case 'ferry':    return ['⛵ Ferry', 'Carries you straight to the far side of the loop.'];
-    case 'trap':     return ['⚠️ Trap', t.used ? 'A sprung thief trap.' : 'Your bell senses a hidden thief trap!'];
+    case 'trap':     return ['⚠️ Trap', t.used ? 'A sprung thief trap.' : 'A hidden thief trap — and you can see it coming.'];
+    case 'leech':    return ['🕷️ Leech Nest', t.used ? 'Already drained.' : 'Drains one charge from a relic you carry.'];
+    case 'tally': {
+      const stake = S.tally + 1;
+      return ['🪨 Tally Stone', `The stake stands at ${stake} coin${stake === 1 ? '' : 's'}. Land here and the stone takes it — or, one time in four, pays it instead. The stake then rises, and every tally stone in the run shares it.`];
+    }
   }
   return ['', ''];
 }
@@ -682,8 +714,17 @@ function playCard(handIdx, opt) {
   clearHighlights();
   renderHand();
   if (shattered) {
-    showNotice('💥', `${SPECIALS[card.spec].name} shattered`,
-      'The glass gave way as you played it. That card is gone from your deck for the rest of the run.');
+    // going out with a bang: the shards are worth the current board number
+    const payout = S.boardIndex;
+    let tale = `The glass gave way as you played it. That card is gone for the rest of the run, but the shards fetch ${payout} coins.`;
+    if (card.spec === 'leap') {
+      S.discard.push({ value: 1, shard: true });
+      tale += ' One splinter stays usable as a Shard — a 1 that moves either way.';
+    }
+    showNotice('💥', `${cardName(card)} shattered`, tale);
+    S.coins += payout;
+    eggCoinGif(payout);
+    renderHUD();
   }
 
   const exec = () => {
@@ -731,8 +772,9 @@ function moveTo(tile, netDelta) {
   renderHUD();
   renderLapDial();
   if (revisit && hasArt('map') && netDelta !== 0) {
-    floatText(tile, '+1 🪙', 'good');
-    addCoins(1);
+    const pay = overcharged('map') ? 2 : 1;
+    floatText(tile, `+${pay} 🪙`, 'good');
+    addCoins(pay);
   }
 }
 
@@ -826,7 +868,12 @@ function updateLaps() {
     S.lostThisLap = false;   // a fresh lap starts clean either way
     addMsg('➰ Lap complete!');
     floatText(S.pos, '➰', 'good');
-    if (hasArt('idol')) { addMsg('🗿 The Green Idol pays you 2 coins.'); if (!addCoins(2)) return; }
+    if (hasArt('idol')) {
+      const pay = overcharged('idol') ? 3 : 2;
+      addMsg(`🗿 The Green Idol pays you ${pay} coins.`);
+      feedCharge('idol');
+      if (!addCoins(pay)) return;
+    }
   }
 }
 
@@ -949,6 +996,36 @@ function resolveLanding(dir, depth, sneak) {
         if (paid > 0 && !addCoins(paid)) return;
       }
       break;
+    case 'tally': {
+      // one running stake for the whole run, shared by every tally stone
+      const stake = ++S.tally;
+      const pays = Math.random() < 0.25;
+      addMsg(pays ? `🪨 The tally stone pays out ${stake} coins!` : `🪨 The tally stone claims ${stake} coins.`);
+      floatText(S.pos, `${pays ? '+' : '−'}${stake} 🪙`, pays ? 'good' : 'bad');
+      renderTiles();
+      if (!addCoins(pays ? stake : -stake)) return;
+      break;
+    }
+    case 'leech':
+      if (!t.used) {
+        t.used = true;
+        const fed = S.artifacts.filter(id => holdsCharges(id) && (S.artCharges[id] || 0) > 0);
+        if (!fed.length) {
+          addMsg('🕷️ The nest finds nothing to drain.');
+        } else {
+          const victim = pick(fed);
+          S.artCharges[victim]--;
+          addMsg(`🕷️ The nest drains a charge from ${ARTIFACTS[victim].name}.`);
+          floatText(S.pos, `${ARTIFACTS[victim].icon}−`, 'bad');
+          if (S.artCharges[victim] <= 0) {
+            S.artifacts = S.artifacts.filter(a => a !== victim);
+            delete S.artCharges[victim];
+            scatterAshes(victim);
+          }
+          renderAll();
+        }
+      }
+      break;
     case 'gust':
       if (hasArt('compass')) {
         addMsg('🧭 Your compass steadies you against the gust.');
@@ -960,7 +1037,7 @@ function resolveLanding(dir, depth, sneak) {
     case 'trap':
       if (!t.used) {
         t.used = true;
-        S.thief = { pos: mod(S.pos + Math.floor(S.board.size / 2), S.board.size) };
+        S.thief = { pos: mod(S.pos + Math.floor(S.board.size / 2), S.board.size), loot: 0 };
         ensureThiefEl();
         addMsg('⚠️ A hidden trap! A thief appears across the board and starts hunting you.');
         floatText(S.pos, '⚠️', 'bad');
@@ -970,10 +1047,12 @@ function resolveLanding(dir, depth, sneak) {
     case 'ferry': {
       if (depth < 3) {
         const dest = mod(S.pos + Math.floor(S.board.size / 2), S.board.size);
+        const hop = Math.floor(S.board.size / 2);
         const sail = () => {
           addMsg('⛵ The ferry carries you to the far side of the loop.');
           animateToken(S.pos, dest, dir, () => {
-            moveTo(dest, 0);
+            // the crossing covers real ground, so it counts toward the lap
+            moveTo(dest, hop * dir);
             if (S.over) return;
             renderAll();
             resolveLanding(dir, depth + 1, false);
@@ -1009,24 +1088,18 @@ function afterEffects() {
     return;
   }
   if (S.thief && S.thief.pos === S.pos) {
-    addMsg('🥷 You caught the thief! +4 coins bounty.');
-    eggBonusGif();
-    floatText(S.pos, '+4 🪙', 'good');
-    S.thief = null;
-    positionNPCs();
-    if (!addCoins(4)) return;
-    if (S.quest && S.quest.type === 'hunt' && S.turn <= S.quest.deadline) completeQuest();
+    if (!meetThief()) return;
     if (S.over) return;
   }
   if (S.board.grinder && S.board.grinder.pos === S.pos && S.hand.length) {
     eggBonusGif();
     askChoice('🪓 The Whetstone',
-      'The grinder offers to destroy one card from your hand — gone from your deck for the rest of the run. A leaner deck draws better.',
-      'Grind a card', 'Walk on by',
-      ok => {
-        if (!ok) { finishTurn(); return; }
+      'The grinder will either destroy a card outright, or grind one down to glass — fragile, but free of any one-way binding.',
+      'Grind to dust', 'Temper to glass',
+      dust => {
+        S.grindMode = dust ? 'dust' : 'glass';
         S.pendingGrind = true;
-        addMsg('🪓 Choose the card to destroy.');
+        addMsg(dust ? '🪓 Choose the card to destroy.' : '🪓 Choose the card to temper.');
         renderAll();
       });
     return;
@@ -1046,6 +1119,35 @@ function finishTurn() {
   if (!checkBoardEnd()) beginTurn();
 }
 
+// Meeting the thief cuts both ways: empty-handed it robs you and bolts,
+// loaded it hands the purse back. Returns false if the run ended.
+function meetThief() {
+  eggBonusGif();
+  if (S.thief.loot > 0) {
+    const loot = S.thief.loot;
+    addMsg(`🥷 You corner the thief and take back your ${loot} coins!`);
+    floatText(S.pos, `+${loot} 🪙`, 'good');
+    S.thief = null;
+    positionNPCs();
+    if (hasArt('charm')) S.artCharges.charm = (S.artCharges.charm || 0) + 1;
+    if (!addCoins(loot)) return false;
+    if (S.quest && S.quest.type === 'hunt' && S.turn <= S.quest.deadline) completeQuest();
+    return true;
+  }
+  let amt = S.board.hardThief ? rand(6, 10) : rand(3, 6);
+  if (hasArt('charm')) amt = Math.ceil(amt / 2);
+  amt = Math.min(amt, Math.max(0, S.coins));   // it can rob you blind but not into debt
+  S.thief.loot = amt;
+  addMsg(amt ? `🥷 The thief lifts ${amt} coins and bolts! Run it down to get them back.`
+             : '🥷 The thief finds your purse empty and slinks away.');
+  floatText(S.pos, amt ? `−${amt} 🪙` : '∅', 'bad');
+  showNotice('🥷', amt ? `Robbed of ${amt} coins` : 'Nothing to steal',
+    amt ? 'The thief is running with your coins. Catch it before the board ends and you get every one of them back.'
+        : 'Your purse was empty, so the thief made off with nothing.');
+  if (amt && !addCoins(-amt)) return false;
+  return true;
+}
+
 function moveNPCs() {
   const n = S.board.size;
   if (S.board.merchant) {
@@ -1055,16 +1157,14 @@ function moveNPCs() {
     const speed = S.board.hardThief ? 3 : 2;
     let d = mod(S.pos - S.thief.pos, n);
     if (d > n / 2) d -= n;
-    const step = Math.sign(d) * Math.min(Math.abs(d), speed);
-    S.thief.pos = mod(S.thief.pos + step, n);
-    if (S.thief.pos === S.pos) {
-      let amt = S.board.hardThief ? rand(6, 10) : rand(3, 6);
-      if (hasArt('charm')) amt = Math.ceil(amt / 2);
-      addMsg(`🥷 The thief catches you and steals ${amt} coins, then vanishes!`);
-      eggBonusGif();
-      floatText(S.pos, `−${amt} 🪙`, 'bad');
-      S.thief = null;
-      if (!addCoins(-amt)) return;
+    if (S.thief.loot > 0) {
+      // loaded: it runs the other way, keeping its distance
+      const away = d === 0 ? 1 : -Math.sign(d);
+      S.thief.pos = mod(S.thief.pos + away * speed, n);
+    } else {
+      const step = Math.sign(d) * Math.min(Math.abs(d), speed);
+      S.thief.pos = mod(S.thief.pos + step, n);
+      if (S.thief.pos === S.pos && !meetThief()) return;
     }
   }
   positionNPCs();
@@ -1073,12 +1173,23 @@ function moveNPCs() {
 // ---------- discard choice ----------
 function onCardClick(idx) {
   if (S.pendingGrind) {
-    const c = S.hand.splice(idx, 1)[0];   // destroyed, not discarded — gone for the run
+    const c = S.hand[idx];
+    const was = cardLabel(c);
+    if (S.grindMode === 'glass') {
+      c.glass = true;
+      delete c.dir;                       // tempering burns the one-way binding away
+      S.hand.splice(idx, 1);
+      S.discard.push(c);
+      showNotice('🪓', `${was} tempered to glass`,
+        'It now runs either way around the loop, but every use risks shattering it for good.');
+    } else {
+      S.hand.splice(idx, 1);              // destroyed, not discarded — gone for the run
+      showNotice('🪓', `${was} destroyed`, 'The whetstone grinds it to dust. Your deck is one card leaner for the rest of the run.');
+    }
     S.pendingGrind = false;
     S.board.grinder = null;               // its work done, the grinder packs up
     positionNPCs();
     renderAll();
-    showNotice('🪓', `${cardLabel(c)} destroyed`, 'The whetstone grinds it to dust. Your deck is one card leaner for the rest of the run.');
     finishTurn();
     return;
   }
@@ -1166,7 +1277,7 @@ function acceptQuest() {
   addMsg('★ Quest accepted!');
   // a hunt needs prey: if no thief is about, one is flushed out of hiding
   if (S.quest.type === 'hunt' && !S.thief) {
-    S.thief = { pos: mod(S.pos + Math.floor(S.board.size / 2), S.board.size) };
+    S.thief = { pos: mod(S.pos + Math.floor(S.board.size / 2), S.board.size), loot: 0 };
     ensureThiefEl();
     addMsg('🥷 A thief breaks cover on the far side of the loop.');
   }
@@ -1211,6 +1322,7 @@ function completeQuest() {
   S.quest = null;
   S.questsDone++;
   S.boardQuests++;
+  feedCharge('clover');
   const gt = S.board.tiles[q.giver];
   if (gt && gt.type === 'quest') { gt.done = true; gt.used = true; }
   renderTiles();
@@ -1433,6 +1545,35 @@ function settlePurchases(done) {
   step();
 }
 
+// a spent relic leaves something behind rather than just a refund
+function scatterAshes(id) {
+  const a = ARTIFACTS[id];
+  let tale;
+  switch (id) {
+    case 'bell':
+      S.discard.push({ value: 2 });
+      tale = 'Its clapper cools into a movement card 2, which joins your deck.';
+      break;
+    case 'map':
+      S.board.tiles.forEach(t => { if (t.type === 'trap') t.mapped = true; });
+      tale = 'Its last ink bleeds across the parchment, marking every trap still hidden on this board.';
+      break;
+    case 'compass':
+      S.turnMod += 2;
+      tale = 'The needle spins itself out and buys you 2 extra turns.';
+      break;
+    case 'clover':
+      S.coins += 9; eggCoinGif(9);
+      tale = 'The withered leaves crumble into 9 coins.';
+      break;
+    default:
+      S.coins += 5; eggCoinGif(5);
+      tale = 'The spirits of the trail buy the husk back for 5 coins.';
+  }
+  showNotice(a.icon, `${a.name} burned out`, tale);
+  return `⏳ ${a.name} burned out. ${tale}`;
+}
+
 // one charge spent per completed board, unless something shields them
 function burnCharges() {
   let note = '';
@@ -1449,10 +1590,7 @@ function burnCharges() {
     if (S.artCharges[id] <= 0) {
       S.artifacts = S.artifacts.filter(a => a !== id);
       delete S.artCharges[id];
-      S.coins += 5;
-      eggCoinGif(5);
-      note += ` ⏳ ${ARTIFACTS[id].name} burned out and was returned for 5 coins.`;
-      showNotice(ARTIFACTS[id].icon, `${ARTIFACTS[id].name} burned out`, 'Its last charge is spent — the spirits of the trail buy it back for 5 coins.');
+      note += ' ' + scatterAshes(id);
     }
   }
   if (warded) note += ' 🛡️ The Warden Sigil bore the cost — your other relics kept their charges.';
@@ -1584,13 +1722,14 @@ function renderHand() {
     const free = c.spec === 'leap' || c.spec === 'shortcut';
     const face = c.spec === 'leap' ? '⁙' : c.spec === 'shortcut' ? '⇢' : cardValue(c);
     el.dataset.v = free ? '' : cardValue(c);
-    el.innerHTML = `<div class="val">${face}</div>` + (c.spec ? `<div class="name">${SPECIALS[c.spec].name}</div>` : '') + dirMark;
+    const label = c.spec ? SPECIALS[c.spec].name : (c.shard ? 'Shard' : (c.glass ? 'Tempered' : ''));
+    el.innerHTML = `<div class="val">${face}</div>` + (label ? `<div class="name">${label}</div>` : '') + dirMark;
     el.addEventListener('click', () => onCardClick(i));
     hand.appendChild(el);
   });
   const sel = S.selected !== null ? S.hand[S.selected] : null;
   $('hand-hint').textContent = S.pendingGrind
-    ? '🪓 Tap the card to destroy forever.'
+    ? (S.grindMode === 'glass' ? '🪓 Tap the card to temper into glass.' : '🪓 Tap the card to destroy forever.')
     : S.pendingDiscard
     ? '✂️ Tap a card to discard it.'
     : sel
@@ -1793,6 +1932,7 @@ function eggPlayNext() {
   $('egg-gif').hidden = false;
   $('btn-ilost').hidden = true;
   EGG.totalSecs += item.secs;
+  if (S) { S.boardGifSecs = (S.boardGifSecs || 0) + item.secs; renderHUD(); }
   const ms = item.secs * 1000;
   setTimeout(() => { $('egg-gif-secs').textContent = item.secs + 's'; }, Math.max(0, ms - 1500));
   setTimeout(() => {
