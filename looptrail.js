@@ -79,6 +79,7 @@ const PAWN_SVG = `
 const TILE_ICONS = {
   start: '⌂', blank: '', coin: '🪙', loss: '🕳', artifact: '🏺',
   draw: '🃏', discard: '✂️', slide: '➤', gust: '🌀', quest: '★', trap: '', ferry: '⛵',
+  boon: '⏱️', haste: '⌛',
 };
 
 function startingDeck() {
@@ -105,7 +106,7 @@ let S = null;
 
 const hasArt = id => S.artifacts.includes(id);
 const maxHand = () => 5 + (hasArt('satchel') ? 1 : 0) - (hasArt('bond') ? 1 : 0);
-const turnLimit = () => S.board.turnLimit + (hasArt('hourglass') ? 2 : 0);
+const turnLimit = () => S.board.turnLimit + (hasArt('hourglass') ? 2 : 0) + S.turnMod;
 
 // ---------- board generation ----------
 function makeBoard(b) {
@@ -115,42 +116,50 @@ function makeBoard(b) {
 
   // objective — never the same type twice in a row
   const lastType = (S && S.board) ? S.board.objective.type : null;
-  const type = pick(['laps', 'coins', 'arts', 'quests', 'survive', 'hand', 'visit', 'home']
-    .filter(t => t !== lastType));
+  const types = ['laps', 'coins', 'arts', 'quests', 'survive', 'visit', 'home'];
+  if (S && S.coins >= 10) types.push('spend'); // needs a purse worth halving
+  const type = pick(types.filter(t => t !== lastType));
 
   let target, limit;
   switch (type) {
     case 'laps':    target = easy ? 1 : 2 + Math.floor(b / 5); limit = target * Math.ceil(size / 3) + 6; break;
-    case 'coins':   target = (easy ? 8 : 10) + 2 * b;          limit = 13 + Math.floor(b / 2); break;
+    case 'coins':   target = (easy ? 8 : 10) + 3 * b;          limit = 13 + Math.floor(b / 2); break;
     case 'arts':    target = b < 3 ? 1 : (b < 9 ? 2 : 3);      limit = 6 + target * 5; break;
     case 'quests':  target = b < 4 ? 1 : 2;                    limit = 6 + target * 7; break;
     case 'survive': target = 10 + b;                           limit = target + 2; break;
-    case 'hand':    target = 5;                                limit = 12; break;
     case 'visit':   target = Math.min(size - 4, (easy ? 6 : 8) + b); limit = target + 5; break;
     case 'home':    target = b < 6 ? 2 : 3;                    limit = target * 5 + 2; break;
+    case 'spend':   target = Math.round(S.coins / 2);          limit = 12 + Math.floor(b / 2); break;
   }
   if (easy) limit += 2;
   const objective = { type, target };
 
   // tile bag: objective-critical tiles first, extras trimmed to fit
   const hell = type === 'survive'; // survival boards are meant to be brutal
-  const coinAmt = 2 + Math.floor(b / 3);
-  const lossAmt = (hell ? 3 : 2) + Math.floor(b / 3);
+  // coin values climb every board: 1-2 on board 1, 2-3 on board 2, and so on
+  const lo = Math.min(b, 14);
+  const coinAmt = () => rand(lo, lo + 1);
+  const lossAmt = () => rand(lo, lo + 1) + (hell ? 1 : 0);
   const crit = [], extra = [];
   const add = (list, tile, n) => { for (let i = 0; i < n; i++) list.push({ ...tile }); };
-  add(crit, { type: 'coin', amt: coinAmt }, (type === 'coins' ? 5 : 2) + Math.floor(size / 20));
-  add(crit, { type: 'coin', amt: coinAmt + 2 }, 1);
+  const addEach = (list, make, n) => { for (let i = 0; i < n; i++) list.push(make()); };
+  addEach(crit, () => ({ type: 'coin', amt: coinAmt() }), (type === 'coins' ? 5 : 2) + Math.floor(size / 20));
+  add(crit, { type: 'coin', amt: lo + 3 }, 1);
   add(crit, { type: 'artifact' }, type === 'arts' ? target + 1 : 1);
-  add(crit, { type: 'draw' }, type === 'hand' ? 4 : 1);
+  add(crit, { type: 'draw' }, 1);
   add(crit, { type: 'quest' }, type === 'quests' ? target + 1 : (Math.random() < 0.5 ? 1 : 0));
   if (hell) {
-    add(crit, { type: 'loss', amt: lossAmt }, 3);
+    addEach(crit, () => ({ type: 'loss', amt: lossAmt() }), 3);
     add(crit, { type: 'loss', half: true }, 2);
     add(crit, { type: 'trap' }, 3 + (b > 5 ? 1 : 0));
   } else {
-    add(extra, { type: 'loss', amt: lossAmt }, 2 + Math.floor(b / 3));
+    addEach(extra, () => ({ type: 'loss', amt: lossAmt() }), 2 + Math.floor(b / 3));
     add(extra, { type: 'trap' }, 1 + (b > 5 ? 1 : 0));
   }
+  // time tiles: one grants turns, one sells them for coins
+  add(crit, { type: 'boon', amt: 2 }, 1);
+  add(extra, { type: 'boon', amt: 2 }, size > 18 ? 1 : 0);
+  add(crit, { type: 'haste', amt: 2 }, 1);
   add(extra, { type: 'discard' }, 1);
   add(extra, { type: 'slide', amt: 2 }, 1 + (size > 18 ? 1 : 0));
   add(extra, { type: 'gust' }, 1 + (size > 20 ? 1 : 0));
@@ -173,9 +182,9 @@ function objectiveDesc() {
     case 'arts':    return `Pick up ${o.target} artifact${o.target > 1 ? 's' : ''} on this board.`;
     case 'quests':  return `Complete ${o.target} quest${o.target > 1 ? 's' : ''}.`;
     case 'survive': return `Survive ${o.target} turns.`;
-    case 'hand':    return `End a turn with ${o.target} cards in hand.`;
     case 'visit':   return `Visit ${o.target} different tiles.`;
     case 'home':    return `Land on the start tile ⌂ ${o.target} times.`;
+    case 'spend':   return `Spend your way down to ${o.target} coins.`;
   }
 }
 
@@ -187,10 +196,22 @@ function objProgress() {
     case 'arts':    return S.boardArts;
     case 'quests':  return S.boardQuests;
     case 'survive': return S.turn;
-    case 'hand':    return S.hand.length;
     case 'visit':   return S.visited.size;
     case 'home':    return S.homeLands;
+    case 'spend':   return S.coins;
   }
+}
+
+// 'spend' counts down to its target; every other objective counts up
+const objectiveMet = () => S.board.objective.type === 'spend'
+  ? S.coins <= S.board.objective.target
+  : objProgress() >= S.board.objective.target;
+
+function objectiveStatus() {
+  const o = S.board.objective;
+  return o.type === 'spend'
+    ? `now ${S.coins} 🪙`
+    : `${Math.min(objProgress(), o.target)}/${o.target}`;
 }
 
 // ---------- run / board lifecycle ----------
@@ -221,6 +242,7 @@ function startRun() {
     boardArts: 0,
     boardQuests: 0,
     homeLands: 0,
+    turnMod: 0,       // turns gained/sold on this board
     visited: new Set([0]),
     msgs: [],
   };
@@ -251,6 +273,7 @@ function nextBoard() {
   S.boardArts = 0;
   S.boardQuests = 0;
   S.homeLands = 0;
+  S.turnMod = 0;
   S.visited = new Set([0]);
   S.draw = shuffle(S.draw.concat(S.discard, S.hand));
   S.discard = [];
@@ -514,6 +537,8 @@ function tileInfo(t) {
     case 'discard':  return ['✂️ Discard', t.used ? 'Already used.' : 'Discard a card of your choice (one-time).'];
     case 'slide':    return ['➤ Slide', `Slides you ${t.amt} tiles onward in your direction of travel.`];
     case 'gust':     return ['🌀 Gust', 'A gust locks the direction of your next move.'];
+    case 'boon':     return ['⏱️ Waystone', t.used ? 'Already claimed.' : `Grants ${t.amt} extra turns to finish the board (one-time).`];
+    case 'haste':    return ['⌛ Time Broker', t.used ? 'Already traded.' : `Sells ${t.amt} of your remaining turns and pays you coins equal to the current turn number (one-time).`];
     case 'quest':    return ['★ Quest', t.done ? 'Quest completed.' : 'A quest giver — land here to hear the offer.'];
     case 'ferry':    return ['⛵ Ferry', 'Carries you straight to the far side of the loop.'];
     case 'trap':     return ['⚠️ Trap', t.used ? 'A sprung thief trap.' : 'Your bell senses a hidden thief trap!'];
@@ -732,6 +757,28 @@ function resolveLanding(dir, depth, sneak) {
         return;
       }
       break;
+    case 'boon':
+      if (!t.used) {
+        t.used = true;
+        S.turnMod += t.amt;
+        addMsg(`⏱️ A waystone — the road grants you ${t.amt} more turns.`);
+        floatText(S.pos, `+${t.amt} ⏱️`, 'good');
+        renderHUD();
+      }
+      break;
+    case 'haste':
+      if (!t.used) {
+        t.used = true;
+        // never sell the last turn out from under the player
+        const cost = Math.min(t.amt, Math.max(0, turnLimit() - S.turn - 1));
+        const paid = S.turn;
+        S.turnMod -= cost;
+        addMsg(`⌛ The time broker takes ${cost} turn${cost === 1 ? '' : 's'} and pays ${paid} coins.`);
+        floatText(S.pos, `+${paid} 🪙`, 'good');
+        renderHUD();
+        if (paid > 0 && !addCoins(paid)) return;
+      }
+      break;
     case 'gust':
       if (hasArt('compass')) {
         addMsg('🧭 Your compass steadies you against the gust.');
@@ -851,13 +898,13 @@ function offerQuest(giverTile, cont) {
       if (i !== giverTile && S.board.tiles[i].type !== 'quest') candidates.push(i);
     }
     shuffle(candidates);
-    q = { type: 'relay', giver: giverTile, targets: candidates.slice(0, count), next: 0, reward: 4 + count * 2 };
+    q = { type: 'relay', giver: giverTile, targets: candidates.slice(0, count), next: 0, reward: (4 + count * 2) + 2 * (S.boardIndex - 1) };
     $('quest-text').textContent =
       `“Touch the ${count} marked tiles in order — I'll pay you ${q.reward} coins.”`;
   } else {
     const target = mod(giverTile + rand(5, n - 5), n);
     const turns = rand(3, 4);
-    q = { type: 'delivery', giver: giverTile, target, deadline: S.turn + turns, reward: 7 };
+    q = { type: 'delivery', giver: giverTile, target, deadline: S.turn + turns, reward: 7 + 2 * (S.boardIndex - 1) };
     $('quest-text').textContent =
       `“Deliver this parcel to the flagged tile within ${turns} turns — ${q.reward} coins on delivery.”`;
   }
@@ -916,8 +963,8 @@ let shopCont = null;
 function shopStock() {
   if (!S.board.shopStock) {
     const stock = [];
-    const markup = S.boardIndex - 1;              // merchant prices climb with each board
-    const smallMarkup = Math.floor(markup / 2);
+    const markup = (S.boardIndex - 1) * 2;        // merchant prices climb with each board
+    const smallMarkup = S.boardIndex - 1;
     const unowned = shuffle(artifactPool('shop').filter(id => id !== 'bond'));
     if (!hasArt('bond') && Math.random() < 0.45) {
       stock.push({ kind: 'artifact', id: 'bond', price: rand(7, 9) + markup });
@@ -1034,7 +1081,7 @@ function refundPurchases() {
 
 // ---------- objective / win / loss ----------
 function checkBoardEnd() {
-  if (objProgress() >= S.board.objective.target) { boardWon(); return true; }
+  if (objectiveMet()) { boardWon(); return true; }
   if (S.turn >= turnLimit()) {
     runLost(`You ran out of turns on board ${S.boardIndex}.`);
     return true;
@@ -1207,8 +1254,7 @@ function renderHUD() {
   $('hud-turns').textContent = `Turn ${S.turn}/${turnLimit()}`;
   $('hud-coins').textContent = `🪙 ${S.coins}`;
   $('hud-deck').textContent = `Deck ${S.draw.length} · Disc ${S.discard.length}`;
-  const o = S.board.objective;
-  $('objective-bar').textContent = `🎯 ${objectiveDesc()} (${Math.min(objProgress(), o.target)}/${o.target})`;
+  $('objective-bar').textContent = `🎯 ${objectiveDesc()} (${objectiveStatus()})`;
 }
 
 function renderAll() {
@@ -1286,63 +1332,47 @@ $('egg-file').addEventListener('change', e => {
 function eggLoadUI(loaded, total, title) {
   if (title) $('egg-load-title').textContent = title;
   $('egg-progress-fill').style.width = total ? (loaded / total * 100) + '%' : '0%';
-  $('egg-load-count').textContent = total ? `Loading ${loaded} / ${total} files…` : '';
+  $('egg-load-count').textContent = total ? `${loaded} / ${total}` : '';
 }
 
+// loads in the background: play continues, gifs become available as they arrive
 async function eggLoadZip(file) {
-  const ov = $('egg-loading');
-  ov.hidden = false; // immediate feedback, before any processing starts
+  const bar = $('egg-loading');
+  bar.hidden = false;              // immediate feedback, before any processing starts
+  document.body.classList.add('gif-loading');
+  eggActivate();                   // palette switches right away, during loading
   eggLoadUI(0, 0, 'Opening collection…');
-  const preview = $('egg-preview');
-  preview.classList.remove('on');
-  let previewTimer = null, lastPrev = -1;
-  const showPreview = pool => {
-    if (!pool.length) return;
-    let i = rand(0, pool.length - 1);
-    if (pool.length > 1 && i === lastPrev) i = (i + 1) % pool.length;
-    lastPrev = i;
-    preview.src = pool[i];
-    preview.classList.add('on');
-  };
-  const fresh = [];
+  EGG.gifs.forEach(u => URL.revokeObjectURL(u));
+  EGG.gifs = [];
   try {
     await loadJSZip();
     const zip = await JSZip.loadAsync(file);
-    // shuffled so every load extracts (and previews) in a different order
+    // shuffled so every load extracts in a different order
     const entries = shuffle(Object.values(zip.files).filter(f => !f.dir && /\.gif$/i.test(f.name)));
     if (!entries.length) {
-      eggLoadUI(0, 0, 'No animations found in that file.');
-      setTimeout(() => { ov.hidden = true; }, 1800);
+      eggLoadUI(0, 0, 'No animations in that file.');
+      setTimeout(() => { bar.hidden = true; document.body.classList.remove('gif-loading'); }, 2200);
       return;
     }
-    eggLoadUI(0, entries.length, 'Loading collection…');
-    previewTimer = setInterval(() => showPreview(fresh), 5000);
+    eggLoadUI(0, entries.length, 'Loading');
     let loaded = 0;
     for (const entry of entries) {
       const blob = await entry.async('blob');
-      fresh.push(URL.createObjectURL(new Blob([blob], { type: 'image/gif' })));
+      EGG.gifs.push(URL.createObjectURL(new Blob([blob], { type: 'image/gif' })));
       loaded++;
       eggLoadUI(loaded, entries.length);
-      if (loaded === 1) showPreview(fresh);
+      await new Promise(r => setTimeout(r, 0)); // yield so the game stays responsive
     }
-    EGG.gifs.forEach(u => URL.revokeObjectURL(u));
-    EGG.gifs = fresh.slice();
-    EGG.order = shuffle(EGG.gifs.map((_, i) => i));
-    EGG.pos = 0;
-    if (!EGG.active) eggActivate();
-    eggLoadUI(EGG.gifs.length, EGG.gifs.length, `Ready! ${EGG.gifs.length} animations loaded`);
-    $('egg-load-count').textContent = '';
-    setTimeout(() => { ov.hidden = true; }, 1400);
+    eggLoadUI(EGG.gifs.length, EGG.gifs.length, `Ready — ${EGG.gifs.length} animations`);
+    setTimeout(() => { bar.hidden = true; document.body.classList.remove('gif-loading'); }, 2200);
   } catch (err) {
-    fresh.forEach(u => URL.revokeObjectURL(u));
     eggLoadUI(0, 0, 'Could not read that file.');
-    setTimeout(() => { ov.hidden = true; }, 1800);
-  } finally {
-    clearInterval(previewTimer);
+    setTimeout(() => { bar.hidden = true; document.body.classList.remove('gif-loading'); }, 2200);
   }
 }
 
 function eggActivate() {
+  if (EGG.active) return;
   EGG.active = true;
   EGG.totalSecs = 0;
   EGG.startTime = Date.now();
@@ -1350,15 +1380,18 @@ function eggActivate() {
   $('btn-ilost').hidden = false;
 }
 
-// gif deck: every gif plays once before any repeats, then reshuffle
+// gif deck over whatever is loaded so far; reshuffles (and picks up new arrivals) when spent
 function eggDrawGif() {
-  if (EGG.pos >= EGG.order.length) { shuffle(EGG.order); EGG.pos = 0; }
+  if (EGG.pos >= EGG.order.length || EGG.order.length !== EGG.gifs.length) {
+    EGG.order = shuffle(EGG.gifs.map((_, i) => i));
+    EGG.pos = 0;
+  }
   return EGG.gifs[EGG.order[EGG.pos++]];
 }
 
 // coin-change trigger: duration in seconds = |coin delta|, no minimum floor
 function eggCoinGif(delta) {
-  if (!EGG.active || !EGG.gifs.length || !delta) return;
+  if (!EGG.active || !EGG.gifs.length || !delta) return; // nothing loaded yet → skip silently
   let secs = Math.abs(delta);
   if (delta < 0 && hasArt('egg_chain')) secs = Math.ceil(secs * 1.5);
   if (hasArt('egg_hourglass')) secs += 3;
@@ -1381,6 +1414,7 @@ function eggEnqueue(secs, isEcho) {
 
 function eggPlayNext() {
   if (EGG.playing || !EGG.queue.length) return;
+  if (!EGG.gifs.length) { EGG.queue = []; return; } // still loading → skip, no fuss
   EGG.playing = true;
   const item = EGG.queue.shift();
   const wrap = $('egg-gif-img');

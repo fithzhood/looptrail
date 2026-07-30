@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta http-equiv="Cache-Control" content="no-store">
 <title>Looptrail</title>
-<link rel="stylesheet" href="looptrail.css?v=8">
+<link rel="stylesheet" href="looptrail.css?v=10">
 </head>
 <body>
 
@@ -92,13 +92,12 @@
   </div>
 </div>
 
-<div id="egg-loading" class="overlay egg-layer" hidden>
-  <div class="panel egg-panel">
-    <h2 class="panel-title" id="egg-load-title">Loading collection…</h2>
-    <div id="egg-progress-track"><div id="egg-progress-fill"></div></div>
-    <p id="egg-load-count" class="panel-text small"></p>
-    <div id="egg-preview-wrap"><img id="egg-preview" alt=""></div>
+<div id="egg-loading" hidden>
+  <div id="egg-load-row">
+    <span id="egg-load-title">Loading collection…</span>
+    <span id="egg-load-count"></span>
   </div>
+  <div id="egg-progress-track"><div id="egg-progress-fill"></div></div>
 </div>
 
 <div id="egg-gif" hidden>
@@ -132,6 +131,6 @@
   </div>
 </div>
 
-<script src="looptrail.js?v=8"></script>
+<script src="looptrail.js?v=10"></script>
 </body>
 </html>
