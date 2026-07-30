@@ -19,15 +19,17 @@ const ARTIFACTS = {
   satchel:   { name: 'Deep Satchel',      icon: '🎒', desc: '+1 max hand size.', shopOnly: true },
   quill:     { name: 'Oaken Quill',       icon: '🪶', desc: 'Draw an extra card each turn (up to your hand limit).', shopOnly: true },
   bond:      { name: "Merchant's Bond",   icon: '🧰', desc: 'A heavy strongbox: −1 max hand size while you carry it. The merchant buys it back at TRIPLE price when you complete the board.', shopOnly: true, refund3x: true },
-  clover:    { name: 'Lucky Clover',      icon: '🍀', desc: '+1 coin whenever you gain coins. Lasts 3 boards.', charges: 3 },
-  idol:      { name: 'Green Idol',        icon: '🗿', desc: '+2 coins each time you complete a lap. Lasts 3 boards.', charges: 3 },
+  clover:    { name: 'Lucky Clover',      icon: '🍀', desc: '+1 coin whenever you gain coins.', charges: 3 },
+  idol:      { name: 'Green Idol',        icon: '🗿', desc: '+2 coins each time you complete a lap.', charges: 3 },
   hourglass: { name: 'Patient Hourglass', icon: '⏳', desc: '+2 turn limit on every board.' },
-  charm:     { name: 'Thief Charm',       icon: '🧿', desc: 'Thieves steal only half as much from you. Lasts 3 boards.', charges: 3 },
+  charm:     { name: 'Thief Charm',       icon: '🧿', desc: 'Thieves steal only half as much from you.', charges: 3 },
   ring:      { name: 'Bargain Ring',      icon: '💍', desc: 'Merchant prices reduced by 2 (min 1).' },
   seal:      { name: 'Quest Seal',        icon: '📜', desc: '+3 coins from every quest reward.' },
-  compass:   { name: 'Old Compass',       icon: '🧭', desc: 'Gust tiles no longer restrict your direction. Lasts 3 boards.', charges: 3 },
-  bell:      { name: 'Warning Bell',      icon: '🔔', desc: 'Hidden thief traps are revealed to you. Lasts 3 boards.', charges: 3 },
-  map:       { name: "Cartographer's Map", icon: '🗺️', desc: '+1 coin whenever you step on a tile you have already visited. Lasts 3 boards.', charges: 3 },
+  compass:   { name: 'Old Compass',       icon: '🧭', desc: 'Gust tiles no longer restrict your direction.', charges: 3 },
+  bell:      { name: 'Warning Bell',      icon: '🔔', desc: 'Hidden thief traps are revealed to you.', charges: 3 },
+  map:       { name: "Cartographer's Map", icon: '🗺️', desc: '+1 coin whenever you step on a tile you have already visited.', charges: 3 },
+  warden:    { name: 'Warden Sigil',      icon: '🛡️', desc: 'While it holds, no other artifact spends charges — only the sigil itself.', charges: 3 },
+  coffer:    { name: "Smuggler's Coffer", icon: '🧳', desc: 'On board completion you may keep a purchase instead of refunding it. Each item kept spends a charge.', charges: 3 },
   anchor:    { name: 'Iron Anchor',       icon: '⚓', desc: 'Slides and ferries become optional — you choose whether to be carried.' },
   resin:     { name: 'Amber Resin',       icon: '🍯', desc: 'Glass cards shatter only 5% of the time instead of 25%.' },
   // hidden-mode exclusives — they shape the animation system, nothing else
@@ -36,11 +38,21 @@ const ARTIFACTS = {
   egg_prism:     { name: 'Echo Prism',              icon: '🔮', desc: 'Animations may echo: 25% chance a second one of the same length follows.', egg: true },
   egg_chain:     { name: 'Gilded Chain',            icon: '⛓️', desc: 'Coin losses play animations half again as long.', egg: true },
   egg_die:       { name: 'Velvet Die',              icon: '🎲', desc: 'Every animation gains 0–4 bonus seconds, rolled each time.', egg: true },
+  egg_reel:      { name: 'Gathering Reel',          icon: '📽️', desc: 'Gains 3 charges at the end of every board and never spends them. Each board it plays an animation as long as its charge count.', egg: true, charges: 0, keepsCharges: true },
 };
+
+// artifacts that can hold charges; charge 0 is still a valid charge pool
+const holdsCharges = id => ARTIFACTS[id].charges != null;
+
+function addCharges(n) {
+  const touched = S.artifacts.filter(holdsCharges);
+  touched.forEach(id => { S.artCharges[id] = (S.artCharges[id] || 0) + n; });
+  return touched.length;
+}
 
 function gainArtifact(id) {
   S.artifacts.push(id);
-  if (ARTIFACTS[id].charges) S.artCharges[id] = ARTIFACTS[id].charges;
+  if (holdsCharges(id)) S.artCharges[id] = ARTIFACTS[id].charges;
 }
 
 function artifactPool(src) {
@@ -50,6 +62,9 @@ function artifactPool(src) {
     const a = ARTIFACTS[id];
     if (a.egg && !EGG.active) return false;
     if (a.shopOnly && src !== 'shop') return false;
+    // charge-limited relics are handed back at board end, so the merchant
+    // would only be renting them out for a single board — not worth the price
+    if (src === 'shop' && holdsCharges(id)) return false;
     return true;
   });
 }
@@ -137,7 +152,7 @@ function makeBoard(b) {
   let target, limit;
   switch (type) {
     case 'laps':    target = easy ? 1 : 2 + Math.floor(b / 5); limit = target * Math.ceil(size / 3) + 6; break;
-    case 'coins':   target = (easy ? 8 : 10) + 3 * b;          limit = 13 + Math.floor(b / 2); break;
+    case 'coins':   target = (S ? S.coins : 5) + (easy ? 7 : 9) + 2 * b; limit = 13 + Math.floor(b / 2); break;
     case 'arts':    target = b < 3 ? 1 : (b < 9 ? 2 : 3);      limit = 6 + target * 5; break;
     case 'quests':  target = b < 4 ? 1 : 2;                    limit = 6 + target * 7; break;
     case 'survive': target = 10 + b;                           limit = target + 2; break;
@@ -163,7 +178,8 @@ function makeBoard(b) {
   add(crit, { type: 'coin', amt: lo + 3 }, 1);
   add(crit, { type: 'artifact' }, type === 'arts' ? target + 1 : 1);
   add(crit, { type: 'draw' }, 1);
-  add(crit, { type: 'quest' }, type === 'quests' ? target + 1 : (Math.random() < 0.5 ? 1 : 0));
+  // quest givers show up on most boards now, not just the ones that demand quests
+  add(crit, { type: 'quest' }, type === 'quests' ? target + 1 : pick([0, 1, 1, 1, 2]));
   if (hell) {
     addEach(crit, () => ({ type: 'loss', amt: lossAmt() }), 3);
     add(crit, { type: 'loss', half: true }, 2);
@@ -198,7 +214,7 @@ function objectiveDesc() {
   const o = S.board.objective;
   switch (o.type) {
     case 'laps':    return `Complete ${o.target} lap${o.target > 1 ? 's' : ''} of the loop.`;
-    case 'coins':   return `Earn ${o.target} coins on this board.`;
+    case 'coins':   return `Build your purse up to ${o.target} coins.`;
     case 'arts':    return `Pick up ${o.target} artifact${o.target > 1 ? 's' : ''} on this board.`;
     case 'quests':  return `Complete ${o.target} quest${o.target > 1 ? 's' : ''}.`;
     case 'survive': return `Survive ${o.target} turns.`;
@@ -214,7 +230,7 @@ function objProgress() {
   const o = S.board.objective;
   switch (o.type) {
     case 'laps':    return S.lapsDone;
-    case 'coins':   return S.boardCoins;
+    case 'coins':   return S.coins;
     case 'arts':    return S.boardArts;
     case 'quests':  return S.boardQuests;
     case 'survive': return S.turn;
@@ -236,7 +252,7 @@ function objectiveMet() {
 
 function objectiveStatus() {
   const o = S.board.objective;
-  if (o.type === 'spend' || o.type === 'precision') return `now ${S.coins} 🪙`;
+  if (o.type === 'spend' || o.type === 'precision' || o.type === 'coins') return `now ${S.coins} 🪙`;
   if (o.type === 'purity') return `${S.pureLaps}/${o.target}${S.lostThisLap ? ' · lap tainted' : ''}`;
   return `${Math.min(objProgress(), o.target)}/${o.target}`;
 }
@@ -363,7 +379,11 @@ function drawCard(silent) {
 }
 
 const cardLabel = c => {
-  const base = c.spec ? `${SPECIALS[c.spec].name} (${c.value})` : `${c.value}`;
+  // cards whose reach is chosen or variable read better without a number
+  const fixed = !(c.spec === 'leap' || c.spec === 'shortcut' || c.spec === 'echo' || c.spec === 'longecho');
+  const base = c.spec
+    ? `${SPECIALS[c.spec].name}${fixed ? ` (${cardValue(c)})` : ''}`
+    : `${c.value}`;
   return c.dir === 1 ? `${base} ↻` : c.dir === -1 ? `${base} ↺` : base;
 };
 
@@ -395,8 +415,8 @@ function beginTurn(first) {
       addMsg(`🚩 Delivery: reach the flagged tile by turn ${S.quest.deadline}.`);
     }
   }
-  if (S.quest && S.quest.type === 'relay') {
-    addMsg(`★ Relay: touch marked tile #${S.quest.next + 1} next.`);
+  if (S.quest && (S.quest.type === 'relay' || S.quest.type === 'rekindle')) {
+    addMsg(`${S.quest.type === 'rekindle' ? '🔆 Flame' : '★ Relay'}: touch marked tile #${S.quest.next + 1} next.`);
   }
   if (S.quest && S.quest.type === 'vow') {
     // surviving past the deadline with the vow intact is the win
@@ -553,7 +573,7 @@ function renderTiles() {
       el.appendChild(v);
     }
     if (S.quest) {
-      if (S.quest.type === 'relay') {
+      if (S.quest.type === 'relay' || S.quest.type === 'rekindle') {
         S.quest.targets.forEach((ti, k) => {
           if (ti === i && k >= S.quest.next) {
             el.classList.add('q-mark');
@@ -1083,6 +1103,7 @@ function offerQuest(giverTile, cont) {
   const kinds = ['relay', 'delivery', 'vow'];
   if (artifactPool('reward').length && S.coins >= 6) kinds.push('collection');
   if (!S.board.hardThief || S.thief) kinds.push('hunt');
+  if (S.artifacts.some(holdsCharges)) kinds.push('rekindle');
   let q;
   switch (pick(kinds)) {
     case 'relay': {
@@ -1121,6 +1142,17 @@ function offerQuest(giverTile, cont) {
       $('quest-text').textContent = `“A thief prowls this loop. Run it down within ${turns} turns and ${q.reward} coins are yours.”`;
       break;
     }
+    case 'rekindle': {
+      const count = rand(2, 3);
+      const candidates = [];
+      for (let i = 0; i < n; i++) {
+        if (i !== giverTile && S.board.tiles[i].type !== 'quest') candidates.push(i);
+      }
+      shuffle(candidates);
+      q = { type: 'rekindle', giver: giverTile, targets: candidates.slice(0, count), next: 0, reward: 0 };
+      $('quest-text').textContent = `“Carry my flame past the ${count} marked tiles and I'll rekindle every relic you hold — one charge apiece. No coin, just fire.”`;
+      break;
+    }
   }
   S.questOffer = { quest: q, cont };
   $('quest').hidden = false;
@@ -1152,7 +1184,7 @@ function declineQuest() {
 function checkQuestAt(pos) {
   if (!S.quest) return;
   const q = S.quest;
-  if (q.type === 'relay') {
+  if (q.type === 'relay' || q.type === 'rekindle') {
     if (q.targets[q.next] === pos) {
       q.next++;
       if (q.next >= q.targets.length) completeQuest();
@@ -1182,6 +1214,17 @@ function completeQuest() {
   const gt = S.board.tiles[q.giver];
   if (gt && gt.type === 'quest') { gt.done = true; gt.used = true; }
   renderTiles();
+
+  if (q.type === 'rekindle') {
+    // paid in charges rather than coin
+    const touched = addCharges(1);
+    addMsg(`★ The keeper rekindles ${touched} artifact${touched === 1 ? '' : 's'}.`);
+    showNotice('🔆', 'Artifacts rekindled',
+      touched ? `Every relic you carry that holds charges gained one. (${touched} rekindled.)`
+              : 'You carry nothing that holds a charge — the keeper shrugs and wishes you luck.');
+    renderAll();
+    return;
+  }
 
   if (q.type === 'collection') {
     // paid in relics, not coin: the collector takes the purse and hands over an artifact
@@ -1225,6 +1268,10 @@ function shopStock() {
     }
     if (unowned[0]) stock.push({ kind: 'artifact', id: unowned[0], price: rand(8, 10) + markup });
     if (unowned[1] && stock.length < 3 && Math.random() < 0.5) stock.push({ kind: 'artifact', id: unowned[1], price: rand(8, 10) + markup });
+    // charges are worth stocking only if the player has something to pour them into
+    if (S.artifacts.some(holdsCharges) && stock.length < 3 && Math.random() < 0.7) {
+      stock.push({ kind: 'charge', price: rand(7, 9) + smallMarkup });
+    }
     while (stock.length < 3) {
       if (Math.random() < 0.3) {
         stock.push({ kind: 'special', id: pick(Object.keys(SPECIALS)), price: rand(6, 8) + smallMarkup });
@@ -1261,6 +1308,9 @@ function renderShop() {
       const a = ARTIFACTS[item.id];
       name = `${a.icon} ${a.name}`;
       desc = a.desc;
+    } else if (item.kind === 'charge') {
+      name = '🔆 Vial of Embers';
+      desc = `+1 charge to every artifact you carry that holds them (${S.artifacts.filter(holdsCharges).length} right now). Permanent — not refunded at board end.`;
     } else if (item.kind === 'special') {
       const sp = SPECIALS[item.id];
       name = `🂠 ${sp.name} card`;
@@ -1287,7 +1337,10 @@ function buyItem(i) {
   item.sold = true;
   S.coins -= p;
   eggCoinGif(-p);
-  if (item.kind === 'artifact') {
+  if (item.kind === 'charge') {
+    const touched = addCharges(1);   // no entry in purchases: embers are burned, not lent
+    addMsg(`🔆 The embers recharge ${touched} artifact${touched === 1 ? '' : 's'}.`);
+  } else if (item.kind === 'artifact') {
     gainArtifact(item.id);
     S.boardArts++;
     S.purchases.push({ kind: 'artifact', id: item.id, cost: p });
@@ -1343,27 +1396,78 @@ function checkBoardEnd() {
   return false;
 }
 
-function boardWon() {
-  S.over = true;
-  const refundNote = refundPurchases();
-  // charge-limited artifacts burn one charge per completed board
-  let expiredNote = '';
+// the coffer lets the player smuggle purchases past the merchant, one charge each
+function settlePurchases(done) {
+  const canSmuggle = hasArt('coffer') && (S.artCharges.coffer || 0) > 0;
+  if (!canSmuggle || !S.purchases.length) { done(refundPurchases()); return; }
+  const queue = [...S.purchases];
+  let kept = 0;
+  const step = () => {
+    if (!queue.length || (S.artCharges.coffer || 0) <= 0) {
+      let note = refundPurchases();
+      if (kept) note += ` 🧳 You smuggle ${kept} purchase${kept === 1 ? '' : 's'} out with you.`;
+      done(note);
+      return;
+    }
+    const pu = queue.shift();
+    const label = pu.kind === 'artifact'
+      ? `${ARTIFACTS[pu.id].icon} ${ARTIFACTS[pu.id].name}`
+      : `a ${cardLabel(pu.card)} card`;
+    askChoice('🧳 Smuggler\'s Coffer',
+      `Keep ${label} for the rest of the run? It spends one coffer charge (${S.artCharges.coffer} left) and you give up the ${pu.cost}-coin refund.`,
+      'Keep it', 'Take the refund',
+      ok => {
+        if (ok) {
+          S.purchases = S.purchases.filter(p => p !== pu);
+          S.artCharges.coffer--;
+          kept++;
+          if (S.artCharges.coffer <= 0) {
+            S.artifacts = S.artifacts.filter(a => a !== 'coffer');
+            delete S.artCharges.coffer;
+            showNotice('🧳', 'Coffer worn out', 'The coffer splinters after its third smuggled prize. It is gone from your run.');
+          }
+        }
+        step();
+      });
+  };
+  step();
+}
+
+// one charge spent per completed board, unless something shields them
+function burnCharges() {
+  let note = '';
+  const warded = hasArt('warden') && (S.artCharges.warden || 0) > 0;
   for (const id of [...S.artifacts]) {
-    if (!ARTIFACTS[id].charges) continue;
+    if (!holdsCharges(id)) continue;
+    if (ARTIFACTS[id].keepsCharges) {         // gathers charges instead of spending them
+      S.artCharges[id] = (S.artCharges[id] || 0) + 3;
+      if (EGG.active) eggEnqueue(S.artCharges[id], false);
+      continue;
+    }
+    if (warded && id !== 'warden') continue;  // the sigil takes the toll for everyone
     S.artCharges[id] = (S.artCharges[id] || 1) - 1;
     if (S.artCharges[id] <= 0) {
       S.artifacts = S.artifacts.filter(a => a !== id);
       delete S.artCharges[id];
       S.coins += 5;
       eggCoinGif(5);
-      expiredNote += ` ⏳ ${ARTIFACTS[id].name} ran out of charge and was returned for 5 coins.`;
-      showNotice(ARTIFACTS[id].icon, `${ARTIFACTS[id].name} exhausted`, 'Its charge ran out — the spirits of the trail buy it back for 5 coins.');
+      note += ` ⏳ ${ARTIFACTS[id].name} burned out and was returned for 5 coins.`;
+      showNotice(ARTIFACTS[id].icon, `${ARTIFACTS[id].name} burned out`, 'Its last charge is spent — the spirits of the trail buy it back for 5 coins.');
     }
   }
+  if (warded) note += ' 🛡️ The Warden Sigil bore the cost — your other relics kept their charges.';
+  return note;
+}
+
+function boardWon() {
+  S.over = true;
   saveBest(S.boardIndex);
-  renderAll();
-  showNotice('🏁', `Board ${S.boardIndex} complete!`, `${objectiveDesc()} Done with ${turnLimit() - S.turn} turn(s) to spare.`);
-  showReward(refundNote + expiredNote);
+  settlePurchases(refundNote => {
+    const expiredNote = burnCharges();
+    renderAll();
+    showNotice('🏁', `Board ${S.boardIndex} complete!`, `${objectiveDesc()} Done with ${turnLimit() - S.turn} turn(s) to spare.`);
+    showReward(refundNote + expiredNote);
+  });
 }
 
 function runLost(reason) {
