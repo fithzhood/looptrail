@@ -27,6 +27,9 @@ const ARTIFACTS = {
   seal:      { name: 'Quest Seal',        icon: '📜', desc: '+3 coins from every quest reward.' },
   compass:   { name: 'Old Compass',       icon: '🧭', desc: 'Gust tiles no longer restrict your direction. Lasts 3 boards.', charges: 3 },
   bell:      { name: 'Warning Bell',      icon: '🔔', desc: 'Hidden thief traps are revealed to you. Lasts 3 boards.', charges: 3 },
+  map:       { name: "Cartographer's Map", icon: '🗺️', desc: '+1 coin whenever you step on a tile you have already visited. Lasts 3 boards.', charges: 3 },
+  anchor:    { name: 'Iron Anchor',       icon: '⚓', desc: 'Slides and ferries become optional — you choose whether to be carried.' },
+  resin:     { name: 'Amber Resin',       icon: '🍯', desc: 'Glass cards shatter only 5% of the time instead of 25%.' },
   // hidden-mode exclusives — they shape the animation system, nothing else
   egg_hourglass: { name: 'Hourglass of Indulgence', icon: '⌛', desc: 'Every animation lasts 3 seconds longer.', egg: true },
   egg_bell:      { name: "Siren's Bell",            icon: '🛎️', desc: 'Meeting any NPC plays a bonus animation.', egg: true },
@@ -57,7 +60,17 @@ const SPECIALS = {
   cycle:  { value: 1, name: 'Cycle',     desc: 'Draw a card and discard a card, then move 1.' },
   sneak:  { value: 2, name: 'Soft Step', desc: 'Move 2 without triggering the tile you land on.' },
   stride: { value: 3, name: 'Stride',    desc: 'Move 3, then draw a card.', shopOnly: true },
+  // glass cards are powerful but fragile: each use may shatter them for good
+  leap:     { value: 3, name: 'Leap',      desc: 'Move 1, 2 or 3 — your choice, either way.', glass: true },
+  longecho: { value: 0, name: 'Long Echo', desc: 'Stay put and trigger this tile twice more.', glass: true },
+  shortcut: { value: 0, name: 'Shortcut',  desc: 'Travel straight to the nearest coin tile, either way.', glass: true },
+  pace:     { value: 0, name: "Merchant's Pace", desc: 'Moves as far as the current turn number.' },
 };
+
+// Merchant's Pace grows with the board clock; everything else is fixed
+const cardValue = c => c.spec === 'pace' ? Math.max(1, S.turn) : c.value;
+const isGlass = c => !!(c.spec && SPECIALS[c.spec].glass);
+const glassOdds = () => hasArt('resin') ? 0.05 : 0.25;
 
 const PAWN_SVG = `
 <svg viewBox="0 0 40 50" xmlns="http://www.w3.org/2000/svg">
@@ -116,8 +129,9 @@ function makeBoard(b) {
 
   // objective — never the same type twice in a row
   const lastType = (S && S.board) ? S.board.objective.type : null;
-  const types = ['laps', 'coins', 'arts', 'quests', 'survive', 'visit', 'home'];
+  const types = ['laps', 'coins', 'arts', 'quests', 'survive', 'visit', 'home', 'purity'];
   if (S && S.coins >= 10) types.push('spend'); // needs a purse worth halving
+  if (S) types.push('precision');
   const type = pick(types.filter(t => t !== lastType));
 
   let target, limit;
@@ -130,6 +144,8 @@ function makeBoard(b) {
     case 'visit':   target = Math.min(size - 4, (easy ? 6 : 8) + b); limit = target + 5; break;
     case 'home':    target = b < 6 ? 2 : 3;                    limit = target * 5 + 2; break;
     case 'spend':   target = Math.round(S.coins / 2);          limit = 12 + Math.floor(b / 2); break;
+    case 'purity':  target = b < 6 ? 1 : 2;                    limit = target * Math.ceil(size / 3) + 8; break;
+    case 'precision': target = Math.max(3, S.coins + rand(4, 10)); limit = 14 + Math.floor(b / 2); break;
   }
   if (easy) limit += 2;
   const objective = { type, target };
@@ -153,7 +169,8 @@ function makeBoard(b) {
     add(crit, { type: 'loss', half: true }, 2);
     add(crit, { type: 'trap' }, 3 + (b > 5 ? 1 : 0));
   } else {
-    addEach(extra, () => ({ type: 'loss', amt: lossAmt() }), 2 + Math.floor(b / 3));
+    // a purity board is seeded with more tolls to dodge, but not a gauntlet
+    addEach(extra, () => ({ type: 'loss', amt: lossAmt() }), 2 + Math.floor(b / 3) + (type === 'purity' ? 2 : 0));
     add(extra, { type: 'trap' }, 1 + (b > 5 ? 1 : 0));
   }
   // time tiles: one grants turns, one sells them for coins
@@ -171,7 +188,10 @@ function makeBoard(b) {
   const tiles = [{ type: 'start' }, ...bag];
 
   const merchant = (type === 'arts' || Math.random() < 0.6) ? { pos: rand(2, size - 2) } : null;
-  return { size, tiles, objective, turnLimit: limit, merchant, hardThief: hell };
+  // the whetstone shows up more often once the deck is getting bloated
+  const deckSize = S ? S.draw.length + S.discard.length + S.hand.length : 10;
+  const grinder = Math.random() < (deckSize > 13 ? 0.65 : 0.3) ? { pos: rand(2, size - 2) } : null;
+  return { size, tiles, objective, turnLimit: limit, merchant, grinder, hardThief: hell };
 }
 
 function objectiveDesc() {
@@ -185,13 +205,15 @@ function objectiveDesc() {
     case 'visit':   return `Visit ${o.target} different tiles.`;
     case 'home':    return `Land on the start tile ⌂ ${o.target} times.`;
     case 'spend':   return `Spend your way down to ${o.target} coins.`;
+    case 'purity':  return `Ride ${o.target} clean lap${o.target > 1 ? 's' : ''} — lose a coin and the lap restarts.`;
+    case 'precision': return `Finish holding exactly ${o.target} coins.`;
   }
 }
 
 function objProgress() {
   const o = S.board.objective;
   switch (o.type) {
-    case 'laps':    return Math.max(0, Math.floor(S.net / S.board.size));
+    case 'laps':    return S.lapsDone;
     case 'coins':   return S.boardCoins;
     case 'arts':    return S.boardArts;
     case 'quests':  return S.boardQuests;
@@ -199,19 +221,24 @@ function objProgress() {
     case 'visit':   return S.visited.size;
     case 'home':    return S.homeLands;
     case 'spend':   return S.coins;
+    case 'purity':  return S.pureLaps;
+    case 'precision': return S.coins;
   }
 }
 
-// 'spend' counts down to its target; every other objective counts up
-const objectiveMet = () => S.board.objective.type === 'spend'
-  ? S.coins <= S.board.objective.target
-  : objProgress() >= S.board.objective.target;
+// most objectives count up to their target; these two read the purse instead
+function objectiveMet() {
+  const o = S.board.objective;
+  if (o.type === 'spend') return S.coins <= o.target;
+  if (o.type === 'precision') return S.coins === o.target;
+  return objProgress() >= o.target;
+}
 
 function objectiveStatus() {
   const o = S.board.objective;
-  return o.type === 'spend'
-    ? `now ${S.coins} 🪙`
-    : `${Math.min(objProgress(), o.target)}/${o.target}`;
+  if (o.type === 'spend' || o.type === 'precision') return `now ${S.coins} 🪙`;
+  if (o.type === 'purity') return `${S.pureLaps}/${o.target}${S.lostThisLap ? ' · lap tainted' : ''}`;
+  return `${Math.min(objProgress(), o.target)}/${o.target}`;
 }
 
 // ---------- run / board lifecycle ----------
@@ -221,7 +248,7 @@ function startRun() {
     pos: 0,
     turn: 0,
     net: 0,
-    lapsPaid: 0,
+    lapsDone: 0,
     coins: 5,
     artifacts: [],
     artCharges: {},   // boards left for charge-limited artifacts
@@ -237,12 +264,16 @@ function startRun() {
     quest: null,
     questOffer: null,
     pendingDiscard: null,
+    pendingGrind: false,
     purchases: [],
     boardCoins: 0,
     boardArts: 0,
     boardQuests: 0,
     homeLands: 0,
     turnMod: 0,       // turns gained/sold on this board
+    echoAgain: 0,     // pending Long Echo re-triggers
+    pureLaps: 0,      // laps ridden without losing a coin
+    lostThisLap: false,
     visited: new Set([0]),
     msgs: [],
   };
@@ -262,18 +293,22 @@ function nextBoard() {
   S.pos = 0;
   S.turn = 0;
   S.net = 0;
-  S.lapsPaid = 0;
+  S.lapsDone = 0;
   S.over = false;
   S.forcedDir = 0;
   S.thief = null;
   S.quest = null;
   S.pendingDiscard = null;
+  S.pendingGrind = false;
   S.purchases = [];
   S.boardCoins = 0;
   S.boardArts = 0;
   S.boardQuests = 0;
   S.homeLands = 0;
   S.turnMod = 0;
+  S.echoAgain = 0;
+  S.pureLaps = 0;
+  S.lostThisLap = false;
   S.visited = new Set([0]);
   S.draw = shuffle(S.draw.concat(S.discard, S.hand));
   S.discard = [];
@@ -296,6 +331,7 @@ function addCoins(n, src) {
   if (n > 0 && src === 'quest' && hasArt('seal')) n += 3;
   S.coins += n;
   if (n > 0) S.boardCoins += n;
+  if (n < 0) { breakVow(); S.lostThisLap = true; }
   eggCoinGif(n);
   renderHUD();
   const el = $('hud-coins');
@@ -362,6 +398,22 @@ function beginTurn(first) {
   if (S.quest && S.quest.type === 'relay') {
     addMsg(`★ Relay: touch marked tile #${S.quest.next + 1} next.`);
   }
+  if (S.quest && S.quest.type === 'vow') {
+    // surviving past the deadline with the vow intact is the win
+    if (S.turn > S.quest.deadline) completeQuest();
+    else addMsg(`🕊️ Vow: hold on to your coins until turn ${S.quest.deadline}.`);
+  }
+  if (S.quest && S.quest.type === 'hunt') {
+    if (S.turn > S.quest.deadline) {
+      addMsg('🥷 The thief slipped away — the hunt is over.');
+      S.quest = null;
+    } else {
+      addMsg(`🥷 Hunt: run down the thief by turn ${S.quest.deadline}.`);
+    }
+  }
+  if (S.quest && S.quest.type === 'collection') {
+    addMsg(`🧺 Collection: bring ${S.quest.due} coins back to the collector ★.`);
+  }
   S.selected = null;
   renderAll();
 }
@@ -406,6 +458,13 @@ function buildBoardDOM() {
     m.textContent = '🛒';
     board.appendChild(m);
   }
+  if (S.board.grinder) {
+    const g = document.createElement('div');
+    g.className = 'npc grinder';
+    g.id = 'npc-grinder';
+    g.textContent = '🪓';
+    board.appendChild(g);
+  }
   layoutBoard();
   renderTiles();
 }
@@ -445,6 +504,17 @@ function positionNPCs() {
     const { x, y } = tileCenter(S.board.merchant.pos);
     m.style.left = x + '%';
     m.style.top = y + '%';
+  }
+  const g = document.getElementById('npc-grinder');
+  if (g) {
+    if (S.board.grinder) {
+      const { x, y } = tileCenter(S.board.grinder.pos);
+      g.style.left = x + '%';
+      g.style.top = y + '%';
+      g.style.display = '';
+    } else {
+      g.style.display = 'none';
+    }
   }
   const th = document.getElementById('npc-thief');
   if (th) {
@@ -499,6 +569,12 @@ function renderTiles() {
         b.className = 'q-badge';
         b.textContent = '🚩';
         el.appendChild(b);
+      } else if (S.quest.type === 'collection' && S.quest.giver === i) {
+        el.classList.add('q-mark');
+        const b = document.createElement('div');
+        b.className = 'q-badge';
+        b.textContent = '🧺';
+        el.appendChild(b);
       }
     }
   });
@@ -509,13 +585,31 @@ window.addEventListener('resize', () => { if (S) layoutBoard(); });
 // ---------- card selection & movement ----------
 function reachableFrom(card) {
   const n = S.board.size;
-  if (card.spec === 'echo') return [{ tile: S.pos, dir: 1 }];
+  if (card.spec === 'echo' || card.spec === 'longecho') return [{ tile: S.pos, dir: 1, dist: 0 }];
   const opts = [];
-  if (S.forcedDir !== -1 && card.dir !== -1) opts.push({ tile: mod(S.pos + card.value, n), dir: 1 });
-  if (S.forcedDir !== 1 && card.spec !== 'charge' && card.dir !== 1) {
-    const ccw = mod(S.pos - card.value, n);
-    if (!opts.some(o => o.tile === ccw)) opts.push({ tile: ccw, dir: -1 });
+  const push = (dist, dir) => {
+    if (dist <= 0) return;
+    if (S.forcedDir && S.forcedDir !== dir) return;   // a gust locks the direction
+    if (card.dir && card.dir !== dir) return;         // one-way cards
+    if (dir === -1 && card.spec === 'charge') return;
+    const tile = mod(S.pos + dist * dir, n);
+    if (!opts.some(o => o.tile === tile)) opts.push({ tile, dir, dist });
+  };
+  if (card.spec === 'leap') {
+    for (const d of [1, 2, 3]) { push(d, 1); push(d, -1); }
+    return opts;
   }
+  if (card.spec === 'shortcut') {
+    for (const dir of [1, -1]) {
+      for (let d = 1; d < n; d++) {
+        if (S.board.tiles[mod(S.pos + d * dir, n)].type === 'coin') { push(d, dir); break; }
+      }
+    }
+    return opts;
+  }
+  const v = cardValue(card);
+  push(v, 1);
+  push(v, -1);
   return opts;
 }
 
@@ -547,7 +641,7 @@ function tileInfo(t) {
 }
 
 function onTileClick(i) {
-  if (S.busy || S.over || S.pendingDiscard) return;
+  if (S.busy || S.over || S.pendingDiscard || S.pendingGrind) return;
   if (S.selected !== null) {
     const card = S.hand[S.selected];
     const opt = reachableFrom(card).find(o => o.tile === i);
@@ -559,23 +653,32 @@ function onTileClick(i) {
 
 function playCard(handIdx, opt) {
   const card = S.hand.splice(handIdx, 1)[0];
-  S.discard.push(card);
+  // glass cards may not survive being played
+  const shattered = isGlass(card) && Math.random() < glassOdds();
+  if (!shattered) S.discard.push(card);
   S.selected = null;
   S.busy = true;
   S.forcedDir = 0;
   clearHighlights();
   renderHand();
+  if (shattered) {
+    showNotice('💥', `${SPECIALS[card.spec].name} shattered`,
+      'The glass gave way as you played it. That card is gone from your deck for the rest of the run.');
+  }
 
   const exec = () => {
-    if (card.spec === 'echo') {
-      setMsg('⟳ Echo — you stay put and the tile triggers again.');
+    if (card.spec === 'echo' || card.spec === 'longecho') {
+      const twice = card.spec === 'longecho';
+      if (twice) S.echoAgain = 1;
+      setMsg(twice ? '⟳ Long Echo — you stay put and the tile triggers twice more.'
+                   : '⟳ Echo — you stay put and the tile triggers again.');
       renderAll();
       setTimeout(() => resolveLanding(1, 0, false), 400);
       return;
     }
-    setMsg(`Moved ${card.value} ${opt.dir === 1 ? 'clockwise ↻' : 'counterclockwise ↺'}.`);
+    setMsg(`Moved ${opt.dist} ${opt.dir === 1 ? 'clockwise ↻' : 'counterclockwise ↺'}.`);
     animateToken(S.pos, opt.tile, opt.dir, () => {
-      moveTo(opt.tile, card.value * opt.dir);
+      moveTo(opt.tile, opt.dist * opt.dir);
       if (card.spec === 'stride') {
         const c = drawCard();
         if (c) addMsg(`🃏 Stride draws you a ${cardLabel(c)}.`);
@@ -598,6 +701,7 @@ function playCard(handIdx, opt) {
 }
 
 function moveTo(tile, netDelta) {
+  const revisit = S.visited.has(tile);
   S.pos = tile;
   S.net += netDelta;
   S.visited.add(tile);
@@ -605,10 +709,32 @@ function moveTo(tile, netDelta) {
   updateLaps();
   positionToken();
   renderHUD();
+  renderLapDial();
+  if (revisit && hasArt('map') && netDelta !== 0) {
+    floatText(tile, '+1 🪙', 'good');
+    addCoins(1);
+  }
 }
 
-// ---------- event notices (queued, tap to skip) ----------
-const NOTICES = { queue: [], showing: false, timer: null };
+// ---------- yes/no prompt ----------
+let choiceCont = null;
+function askChoice(title, text, yes, no, cont) {
+  $('choice-title').textContent = title;
+  $('choice-text').textContent = text;
+  $('btn-choice-yes').textContent = yes;
+  $('btn-choice-no').textContent = no;
+  choiceCont = cont;
+  $('choice').hidden = false;
+}
+function answerChoice(ok) {
+  $('choice').hidden = true;
+  const cont = choiceCont;
+  choiceCont = null;
+  if (cont) cont(ok);
+}
+
+// ---------- event notices (queued, dismissed by tapping) ----------
+const NOTICES = { queue: [], showing: false };
 
 function showNotice(icon, title, text) {
   NOTICES.queue.push({ icon, title, text });
@@ -623,14 +749,13 @@ function pumpNotice() {
   $('notice-title').textContent = n.title;
   $('notice-text').textContent = n.text;
   $('notice').hidden = false;
-  NOTICES.timer = setTimeout(closeNotice, 2600);
 }
 
+// stays up until the player taps it — never auto-dismissed
 function closeNotice() {
-  clearTimeout(NOTICES.timer);
   $('notice').hidden = true;
   NOTICES.showing = false;
-  setTimeout(pumpNotice, 220);
+  setTimeout(pumpNotice, 200);
 }
 
 // floating effect text above a tile
@@ -669,14 +794,30 @@ function animateToken(from, to, dir, done) {
   tick();
 }
 
+// A lap closes when the signed distance travelled since the last one covers the
+// whole loop, in either direction. The sign of S.net is the direction currently
+// being ridden, so a backward move stretches the lap instead of shortening it.
 function updateLaps() {
-  const laps = Math.max(0, Math.floor(S.net / S.board.size));
-  while (laps > S.lapsPaid) {
-    S.lapsPaid++;
+  const n = S.board.size;
+  while (Math.abs(S.net) >= n) {
+    S.net -= Math.sign(S.net) * n;
+    S.lapsDone++;
+    if (!S.lostThisLap) S.pureLaps++;
+    S.lostThisLap = false;   // a fresh lap starts clean either way
     addMsg('➰ Lap complete!');
-    floatText(0, '➰', 'good');
+    floatText(S.pos, '➰', 'good');
     if (hasArt('idol')) { addMsg('🗿 The Green Idol pays you 2 coins.'); if (!addCoins(2)) return; }
   }
+}
+
+function renderLapDial() {
+  const dial = $('lap-dial');
+  if (!S.net) { dial.hidden = true; return; }
+  const cw = S.net > 0;
+  dial.hidden = false;
+  dial.classList.toggle('ccw', !cw);
+  $('lap-arrow').textContent = cw ? '↻' : '↺';
+  $('lap-count').textContent = S.board.size - Math.abs(S.net);
 }
 
 // ---------- tile resolution ----------
@@ -746,14 +887,23 @@ function resolveLanding(dir, depth, sneak) {
       break;
     case 'slide':
       if (depth < 3) {
-        addMsg(`➤ The tile slides you ${t.amt} further.`);
         const dest = mod(S.pos + t.amt * dir, S.board.size);
-        animateToken(S.pos, dest, dir, () => {
-          moveTo(dest, t.amt * dir);
-          if (S.over) return;
-          renderAll();
-          resolveLanding(dir, depth + 1, false);
-        });
+        const ride = () => {
+          addMsg(`➤ The tile slides you ${t.amt} further.`);
+          animateToken(S.pos, dest, dir, () => {
+            moveTo(dest, t.amt * dir);
+            if (S.over) return;
+            renderAll();
+            resolveLanding(dir, depth + 1, false);
+          });
+        };
+        if (hasArt('anchor')) {
+          askChoice('➤ Slide', `This tile would carry you ${t.amt} further ${dir === 1 ? 'clockwise' : 'counterclockwise'}. Your anchor lets you refuse.`,
+            'Let it carry me', 'Drop anchor',
+            ok => ok ? ride() : (addMsg('⚓ You drop anchor and stay put.'), done()));
+          return;
+        }
+        ride();
         return;
       }
       break;
@@ -800,13 +950,22 @@ function resolveLanding(dir, depth, sneak) {
     case 'ferry': {
       if (depth < 3) {
         const dest = mod(S.pos + Math.floor(S.board.size / 2), S.board.size);
-        addMsg('⛵ The ferry carries you to the far side of the loop.');
-        animateToken(S.pos, dest, dir, () => {
-          moveTo(dest, 0);
-          if (S.over) return;
-          renderAll();
-          resolveLanding(dir, depth + 1, false);
-        });
+        const sail = () => {
+          addMsg('⛵ The ferry carries you to the far side of the loop.');
+          animateToken(S.pos, dest, dir, () => {
+            moveTo(dest, 0);
+            if (S.over) return;
+            renderAll();
+            resolveLanding(dir, depth + 1, false);
+          });
+        };
+        if (hasArt('anchor')) {
+          askChoice('⛵ Ferry', 'The ferry would take you straight across the loop. Your anchor lets you wave it off.',
+            'Board the ferry', 'Drop anchor',
+            ok => ok ? sail() : (addMsg('⚓ You drop anchor and let the ferry go.'), done()));
+          return;
+        }
+        sail();
         return;
       }
       break;
@@ -824,6 +983,11 @@ function resolveLanding(dir, depth, sneak) {
 function afterEffects() {
   if (S.over) return;
   renderAll();
+  if (S.echoAgain > 0) {   // Long Echo: hit the same tile again before the turn ends
+    S.echoAgain--;
+    setTimeout(() => resolveLanding(1, 0, false), 420);
+    return;
+  }
   if (S.thief && S.thief.pos === S.pos) {
     addMsg('🥷 You caught the thief! +4 coins bounty.');
     eggBonusGif();
@@ -831,6 +995,21 @@ function afterEffects() {
     S.thief = null;
     positionNPCs();
     if (!addCoins(4)) return;
+    if (S.quest && S.quest.type === 'hunt' && S.turn <= S.quest.deadline) completeQuest();
+    if (S.over) return;
+  }
+  if (S.board.grinder && S.board.grinder.pos === S.pos && S.hand.length) {
+    eggBonusGif();
+    askChoice('🪓 The Whetstone',
+      'The grinder offers to destroy one card from your hand — gone from your deck for the rest of the run. A leaner deck draws better.',
+      'Grind a card', 'Walk on by',
+      ok => {
+        if (!ok) { finishTurn(); return; }
+        S.pendingGrind = true;
+        addMsg('🪓 Choose the card to destroy.');
+        renderAll();
+      });
+    return;
   }
   if (S.board.merchant && S.board.merchant.pos === S.pos) {
     openShop(() => finishTurn());
@@ -873,6 +1052,16 @@ function moveNPCs() {
 
 // ---------- discard choice ----------
 function onCardClick(idx) {
+  if (S.pendingGrind) {
+    const c = S.hand.splice(idx, 1)[0];   // destroyed, not discarded — gone for the run
+    S.pendingGrind = false;
+    S.board.grinder = null;               // its work done, the grinder packs up
+    positionNPCs();
+    renderAll();
+    showNotice('🪓', `${cardLabel(c)} destroyed`, 'The whetstone grinds it to dust. Your deck is one card leaner for the rest of the run.');
+    finishTurn();
+    return;
+  }
   if (S.pendingDiscard) {
     const c = S.hand.splice(idx, 1)[0];
     S.discard.push(c);
@@ -890,23 +1079,48 @@ function onCardClick(idx) {
 function offerQuest(giverTile, cont) {
   eggBonusGif();
   const n = S.board.size;
+  const bonus = 2 * (S.boardIndex - 1);
+  const kinds = ['relay', 'delivery', 'vow'];
+  if (artifactPool('reward').length && S.coins >= 6) kinds.push('collection');
+  if (!S.board.hardThief || S.thief) kinds.push('hunt');
   let q;
-  if (Math.random() < 0.5) {
-    const count = rand(2, 3);
-    const candidates = [];
-    for (let i = 0; i < n; i++) {
-      if (i !== giverTile && S.board.tiles[i].type !== 'quest') candidates.push(i);
+  switch (pick(kinds)) {
+    case 'relay': {
+      const count = rand(2, 3);
+      const candidates = [];
+      for (let i = 0; i < n; i++) {
+        if (i !== giverTile && S.board.tiles[i].type !== 'quest') candidates.push(i);
+      }
+      shuffle(candidates);
+      q = { type: 'relay', giver: giverTile, targets: candidates.slice(0, count), next: 0, reward: 4 + count * 2 + bonus };
+      $('quest-text').textContent = `“Touch the ${count} marked tiles in order — I'll pay you ${q.reward} coins.”`;
+      break;
     }
-    shuffle(candidates);
-    q = { type: 'relay', giver: giverTile, targets: candidates.slice(0, count), next: 0, reward: (4 + count * 2) + 2 * (S.boardIndex - 1) };
-    $('quest-text').textContent =
-      `“Touch the ${count} marked tiles in order — I'll pay you ${q.reward} coins.”`;
-  } else {
-    const target = mod(giverTile + rand(5, n - 5), n);
-    const turns = rand(3, 4);
-    q = { type: 'delivery', giver: giverTile, target, deadline: S.turn + turns, reward: 7 + 2 * (S.boardIndex - 1) };
-    $('quest-text').textContent =
-      `“Deliver this parcel to the flagged tile within ${turns} turns — ${q.reward} coins on delivery.”`;
+    case 'delivery': {
+      const target = mod(giverTile + rand(5, n - 5), n);
+      const turns = rand(3, 4);
+      q = { type: 'delivery', giver: giverTile, target, deadline: S.turn + turns, reward: 7 + bonus };
+      $('quest-text').textContent = `“Deliver this parcel to the flagged tile within ${turns} turns — ${q.reward} coins on delivery.”`;
+      break;
+    }
+    case 'vow': {
+      const turns = rand(3, 5);
+      q = { type: 'vow', giver: giverTile, deadline: S.turn + turns, reward: 8 + bonus };
+      $('quest-text').textContent = `“Walk ${turns} turns without losing a single coin to the road — tolls, pits, thieves. Spending at the merchant is fair game. ${q.reward} coins if you keep the vow.”`;
+      break;
+    }
+    case 'collection': {
+      const due = 5 + Math.floor(S.coins / 6) + S.boardIndex;
+      q = { type: 'collection', giver: giverTile, due, reward: 0 };
+      $('quest-text').textContent = `“Bring me ${due} coins — hand them over and I'll part with one of my relics instead of coin.”`;
+      break;
+    }
+    case 'hunt': {
+      const turns = rand(4, 6);
+      q = { type: 'hunt', giver: giverTile, deadline: S.turn + turns, reward: 12 + bonus };
+      $('quest-text').textContent = `“A thief prowls this loop. Run it down within ${turns} turns and ${q.reward} coins are yours.”`;
+      break;
+    }
   }
   S.questOffer = { quest: q, cont };
   $('quest').hidden = false;
@@ -918,6 +1132,12 @@ function acceptQuest() {
   S.questOffer = null;
   $('quest').hidden = true;
   addMsg('★ Quest accepted!');
+  // a hunt needs prey: if no thief is about, one is flushed out of hiding
+  if (S.quest.type === 'hunt' && !S.thief) {
+    S.thief = { pos: mod(S.pos + Math.floor(S.board.size / 2), S.board.size) };
+    ensureThiefEl();
+    addMsg('🥷 A thief breaks cover on the far side of the loop.');
+  }
   renderAll();
   cont();
 }
@@ -940,6 +1160,17 @@ function checkQuestAt(pos) {
     }
   } else if (q.type === 'delivery') {
     if (q.target === pos && S.turn <= q.deadline) completeQuest();
+  } else if (q.type === 'collection') {
+    if (pos === q.giver && S.coins >= q.due) completeQuest();
+  }
+}
+
+// the pilgrim's vow breaks the moment coins are lost for any reason
+function breakVow() {
+  if (S.quest && S.quest.type === 'vow') {
+    S.quest = null;
+    addMsg('🚩 A coin slips away — the vow is broken.');
+    showNotice('🚩', 'Vow broken', 'You lost coins before the vow ran its course. The quest is off.');
   }
 }
 
@@ -950,10 +1181,33 @@ function completeQuest() {
   S.boardQuests++;
   const gt = S.board.tiles[q.giver];
   if (gt && gt.type === 'quest') { gt.done = true; gt.used = true; }
+  renderTiles();
+
+  if (q.type === 'collection') {
+    // paid in relics, not coin: the collector takes the purse and hands over an artifact
+    const pool = artifactPool('reward');
+    addMsg(`★ You hand over ${q.due} coins.`);
+    floatText(S.pos, `−${q.due} 🪙`, 'bad');
+    S.coins -= q.due;
+    eggCoinGif(-q.due);
+    renderHUD();
+    if (pool.length) {
+      const id = pick(pool);
+      gainArtifact(id);
+      S.boardArts++;
+      showNotice(ARTIFACTS[id].icon, `Traded for ${ARTIFACTS[id].name}`, ARTIFACTS[id].desc);
+    } else {
+      showNotice('★', 'Collection complete', 'The collector has nothing left worth trading, and returns half your coins.');
+      S.coins += Math.floor(q.due / 2);
+      renderHUD();
+    }
+    if (S.coins < 0) { runLost('Your coins dropped below zero — the debt collectors end your run.'); return; }
+    return;
+  }
+
   addMsg(`★ Quest complete! +${q.reward} coins.`);
   floatText(S.pos, `+${q.reward} 🪙`, 'good');
   showNotice('★', 'Quest complete!', `The quest giver pays you ${q.reward} coins${hasArt('seal') ? ' (+3 from the Quest Seal)' : ''}.`);
-  renderTiles();
   addCoins(q.reward, 'quest');
 }
 
@@ -1200,7 +1454,7 @@ function clearHighlights() {
 
 function renderHighlights() {
   clearHighlights();
-  if (S.selected === null || S.pendingDiscard) return;
+  if (S.selected === null || S.pendingDiscard || S.pendingGrind) return;
   const card = S.hand[S.selected];
   reachableFrom(card).forEach(o => {
     const el = tileEls[o.tile];
@@ -1219,15 +1473,21 @@ function renderHand() {
     const el = document.createElement('div');
     el.className = 'card'
       + (c.spec ? ' special' : '')
+      + (isGlass(c) ? ' glass' : '')
       + (S.selected === i && !S.pendingDiscard ? ' selected' : '');
     const dirMark = c.dir === 1 ? '<div class="cdir">↻</div>' : c.dir === -1 ? '<div class="cdir ccw">↺</div>' : '';
-    el.dataset.v = c.value;
-    el.innerHTML = `<div class="val">${c.value}</div>` + (c.spec ? `<div class="name">${SPECIALS[c.spec].name}</div>` : '') + dirMark;
+    // cards without a fixed distance show a glyph instead of a number
+    const free = c.spec === 'leap' || c.spec === 'shortcut';
+    const face = c.spec === 'leap' ? '⁙' : c.spec === 'shortcut' ? '⇢' : cardValue(c);
+    el.dataset.v = free ? '' : cardValue(c);
+    el.innerHTML = `<div class="val">${face}</div>` + (c.spec ? `<div class="name">${SPECIALS[c.spec].name}</div>` : '') + dirMark;
     el.addEventListener('click', () => onCardClick(i));
     hand.appendChild(el);
   });
   const sel = S.selected !== null ? S.hand[S.selected] : null;
-  $('hand-hint').textContent = S.pendingDiscard
+  $('hand-hint').textContent = S.pendingGrind
+    ? '🪓 Tap the card to destroy forever.'
+    : S.pendingDiscard
     ? '✂️ Tap a card to discard it.'
     : sel
       ? (sel.spec ? SPECIALS[sel.spec].desc + ' — tap a glowing tile.' : 'Tap a glowing tile to move there.')
@@ -1259,12 +1519,13 @@ function renderHUD() {
 
 function renderAll() {
   renderHUD();
+  renderLapDial();
   renderTiles();
   renderHand();
   renderArtifacts();
   renderHighlights();
   positionNPCs();
-  document.body.classList.toggle('pick-hand', !!S.pendingDiscard);
+  document.body.classList.toggle('pick-hand', !!(S.pendingDiscard || S.pendingGrind));
 }
 
 // ---------- boot ----------
@@ -1286,6 +1547,8 @@ $('btn-shop-close').addEventListener('click', closeShop);
 $('btn-quest-accept').addEventListener('click', acceptQuest);
 $('btn-quest-decline').addEventListener('click', declineQuest);
 $('notice').addEventListener('click', closeNotice);
+$('btn-choice-yes').addEventListener('click', () => answerChoice(true));
+$('btn-choice-no').addEventListener('click', () => answerChoice(false));
 
 // ---------- hidden mode ----------
 const EGG = {

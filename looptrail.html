@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta http-equiv="Cache-Control" content="no-store">
 <title>Looptrail</title>
-<link rel="stylesheet" href="looptrail.css?v=10">
+<link rel="stylesheet" href="looptrail.css?v=11">
 </head>
 <body>
 
@@ -33,6 +33,11 @@
           <line x1="8" y1="50" x2="92" y2="50" stroke-width=".5"/>
         </g>
       </svg>
+      <div id="lap-dial" hidden>
+        <span id="lap-arrow">↻</span>
+        <span id="lap-count"></span>
+        <span id="lap-label">to lap</span>
+      </div>
       <div id="center-msg"></div>
     </div>
   </div>
@@ -66,6 +71,17 @@
   </div>
 </div>
 
+<div id="choice" class="overlay" hidden>
+  <div class="panel">
+    <h2 id="choice-title" class="panel-title"></h2>
+    <p id="choice-text" class="panel-text"></p>
+    <div class="btn-row">
+      <button id="btn-choice-yes" class="btn"></button>
+      <button id="btn-choice-no" class="btn btn-plain"></button>
+    </div>
+  </div>
+</div>
+
 <div id="result" class="overlay" hidden>
   <div class="panel">
     <h2 id="result-title" class="panel-title"></h2>
@@ -88,7 +104,7 @@
     <div id="notice-icon"></div>
     <div id="notice-title"></div>
     <div id="notice-text"></div>
-    <div id="notice-hint">tap to continue</div>
+    <div id="notice-hint">tap anywhere to continue</div>
   </div>
 </div>
 
@@ -131,6 +147,6 @@
   </div>
 </div>
 
-<script src="looptrail.js?v=10"></script>
+<script src="looptrail.js?v=11"></script>
 </body>
 </html>

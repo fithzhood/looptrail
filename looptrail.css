@@ -107,6 +107,34 @@ body.egg .hud-item {
   opacity: .14;
 }
 body.egg #compass-rose { color: #c9a2e0; opacity: .18; }
+/* lap dial: which way the current lap is being ridden, and how far is left */
+#lap-dial {
+  position: absolute;
+  top: 24%;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 3px 12px;
+  border-radius: 999px;
+  background: rgba(253, 246, 227, .8);
+  border: 1px solid var(--gold);
+  color: var(--green);
+  white-space: nowrap;
+}
+#lap-dial[hidden] { display: none; }
+#lap-arrow { font-size: 22px; font-weight: bold; line-height: 1; }
+#lap-dial.ccw #lap-arrow { color: var(--red); }
+#lap-count { font-size: 17px; font-weight: bold; }
+#lap-label { font-size: 10.5px; font-style: italic; opacity: .75; }
+body.egg #lap-dial {
+  background: rgba(24, 14, 32, .85);
+  border-color: #8e2f3c;
+  color: #c9a2e0;
+}
+body.egg #lap-dial.ccw #lap-arrow { color: #ff8f8f; }
+
 #center-msg {
   position: relative;
   max-width: 50%;
@@ -268,6 +296,12 @@ body.egg .v-badge { background: #7a3496; border-color: #ff9e5e; }
   box-shadow: inset 0 0 0 2px rgba(255,255,255,.35), 0 2px 4px rgba(0,0,0,.35);
   transform: translate(30%, -30%);
 }
+.npc.grinder {
+  background: radial-gradient(circle at 35% 30%, #cfd6da, #7b878e 75%);
+  border-color: #414a50;
+  box-shadow: inset 0 0 0 2px rgba(255,255,255,.3), 0 2px 4px rgba(0,0,0,.4);
+  transform: translate(30%, 30%);
+}
 .npc.thief {
   background: radial-gradient(circle at 35% 30%, #6b5c4a, #2c241c 75%);
   border-color: #14100c;
@@ -424,6 +458,18 @@ body.egg .card .cdir.ccw { color: #ff8f8f; }
   border-color: var(--gold);
 }
 .card.special .val { color: #8a6d1a; }
+
+/* glass cards: fragile, may shatter when played */
+.card.glass {
+  background: linear-gradient(160deg, #e8f6fb, #bfe2ef);
+  border-color: #4a8ea2;
+  border-style: dashed;
+}
+.card.glass .val { color: #2a6478; }
+.card.glass .name { color: #2a6478; }
+.card.glass::before, .card.glass::after { color: #4a8ea2; }
+body.egg .card.glass { background: linear-gradient(160deg, #1e3440, #16262e); border-color: #6ab4cc; }
+body.egg .card.glass .val, body.egg .card.glass .name { color: #9fdcee; }
 .card.selected {
   transform: translateY(-12px) scale(1.06);
   border-color: var(--gold);
