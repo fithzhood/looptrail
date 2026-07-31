@@ -353,13 +353,22 @@ function addMsg(txt) { S.msgs.push(txt); if (S.msgs.length > 4) S.msgs.shift(); 
 function renderMsg() { $('center-msg').innerHTML = S.msgs.map(m => `<div>${m}</div>`).join(''); }
 
 // ---------- coins ----------
-function addCoins(n, src) {
+// Every coin movement is announced. Changes landing in the same tick — several
+// merchant refunds, say — share a single window, and in hidden mode the
+// animations only start once that window is dismissed.
+let coinBatch = [];
+let coinFlush = null;
+
+function addCoins(n, why, isQuest) {
   if (n > 0 && hasArt('clover')) n += overcharged('clover') ? 2 : 1;
-  if (n > 0 && src === 'quest' && hasArt('seal')) n += 3;
+  if (n > 0 && isQuest && hasArt('seal')) n += 3;
   S.coins += n;
   if (n > 0) S.boardCoins += n;
   if (n < 0) breakVow();
-  eggCoinGif(n);
+  if (n !== 0) {
+    coinBatch.push({ n, why: why || (n > 0 ? 'You gain coins' : 'You lose coins') });
+    if (!coinFlush) coinFlush = setTimeout(flushCoinBatch, 0);
+  }
   renderHUD();
   const el = $('hud-coins');
   el.classList.remove('coin-flash');
@@ -370,6 +379,23 @@ function addCoins(n, src) {
     return false;
   }
   return true;
+}
+
+function flushCoinBatch() {
+  coinFlush = null;
+  const batch = coinBatch;
+  coinBatch = [];
+  if (!batch.length) return;
+  const net = batch.reduce((s, e) => s + e.n, 0);
+  const line = e => `${e.why} — ${e.n > 0 ? '+' : '−'}${Math.abs(e.n)} 🪙`;
+  const body = batch.length === 1
+    ? line(batch[0])
+    : batch.map(line).join('\n') + `\n\nNet: ${net > 0 ? '+' : net < 0 ? '−' : ''}${Math.abs(net)} 🪙`;
+  showNotice(net >= 0 ? '🪙' : '💸',
+    net > 0 ? `You gained ${net} coins` : net < 0 ? `You lost ${Math.abs(net)} coins` : 'Coins changed hands',
+    `${body}\n\nPurse: ${S.coins} 🪙`,
+    // one animation per listed change, once the player has read the tally
+    () => batch.forEach(e => eggCoinGif(e.n)));
 }
 
 // ---------- deck ----------
@@ -711,9 +737,7 @@ function playCard(handIdx, opt) {
       tale += ' One splinter stays usable as a Shard — a 1 that moves either way.';
     }
     showNotice('💥', `${cardName(card)} shattered`, tale);
-    S.coins += payout;
-    eggCoinGif(payout);
-    renderHUD();
+    addCoins(payout, `You sell the shards of ${cardName(card)}`);
   }
 
   const exec = () => {
@@ -763,7 +787,7 @@ function moveTo(tile, netDelta) {
   if (revisit && hasArt('map') && netDelta !== 0) {
     const pay = overcharged('map') ? 2 : 1;
     floatText(tile, `+${pay} 🪙`, 'good');
-    addCoins(pay);
+    addCoins(pay, '🗺️ The map pays for familiar ground');
   }
 }
 
@@ -785,10 +809,10 @@ function answerChoice(ok) {
 }
 
 // ---------- event notices (queued, dismissed by tapping) ----------
-const NOTICES = { queue: [], showing: false };
+const NOTICES = { queue: [], showing: false, current: null };
 
-function showNotice(icon, title, text) {
-  NOTICES.queue.push({ icon, title, text });
+function showNotice(icon, title, text, after) {
+  NOTICES.queue.push({ icon, title, text, after });
   pumpNotice();
 }
 
@@ -796,6 +820,7 @@ function pumpNotice() {
   if (NOTICES.showing || !NOTICES.queue.length) return;
   NOTICES.showing = true;
   const n = NOTICES.queue.shift();
+  NOTICES.current = n;
   $('notice-icon').textContent = n.icon;
   $('notice-title').textContent = n.title;
   $('notice-text').textContent = n.text;
@@ -804,8 +829,11 @@ function pumpNotice() {
 
 // stays up until the player taps it — never auto-dismissed
 function closeNotice() {
+  const n = NOTICES.current;
+  NOTICES.current = null;
   $('notice').hidden = true;
   NOTICES.showing = false;
+  if (n && n.after) n.after();
   setTimeout(pumpNotice, 200);
 }
 
@@ -859,7 +887,7 @@ function updateLaps() {
       const pay = overcharged('idol') ? 3 : 2;
       addMsg(`🗿 The Green Idol pays you ${pay} coins.`);
       feedCharge('idol');
-      if (!addCoins(pay)) return;
+      if (!addCoins(pay, '🗿 The Green Idol blesses a completed lap')) return;
     }
   }
 }
@@ -892,13 +920,13 @@ function resolveLanding(dir, depth, sneak) {
     case 'coin':
       addMsg(`🪙 +${t.amt} coins.`);
       floatText(S.pos, `+${t.amt} 🪙`, 'good');
-      if (!addCoins(t.amt)) return;
+      if (!addCoins(t.amt, 'A coin cache on the trail')) return;
       break;
     case 'loss': {
       const lost = t.half ? Math.ceil(Math.max(0, S.coins) / 2) : t.amt;
       addMsg(t.half ? `💀 The pit swallows half your coins (−${lost}).` : `🕳 You lose ${t.amt} coins.`);
       floatText(S.pos, `−${lost} 🪙`, 'bad');
-      if (lost > 0 && !addCoins(-lost)) return;
+      if (lost > 0 && !addCoins(-lost, t.half ? 'A pit swallows half your purse' : 'A toll on the road')) return;
       break;
     }
     case 'artifact':
@@ -915,7 +943,7 @@ function resolveLanding(dir, depth, sneak) {
         } else {
           addMsg('🏺 The urn holds 3 coins.');
           floatText(S.pos, '+3 🪙', 'good');
-          if (!addCoins(3)) return;
+          if (!addCoins(3, 'An urn with nothing but coins in it')) return;
         }
       }
       break;
@@ -980,7 +1008,7 @@ function resolveLanding(dir, depth, sneak) {
         addMsg(`⌛ The time broker takes ${cost} turn${cost === 1 ? '' : 's'} and pays ${paid} coins.`);
         floatText(S.pos, `+${paid} 🪙`, 'good');
         renderHUD();
-        if (paid > 0 && !addCoins(paid)) return;
+        if (paid > 0 && !addCoins(paid, `The time broker buys ${cost} turn${cost === 1 ? '' : 's'}`)) return;
       }
       break;
     case 'tally': {
@@ -990,7 +1018,7 @@ function resolveLanding(dir, depth, sneak) {
       addMsg(pays ? `🪨 The tally stone pays out ${stake} coins!` : `🪨 The tally stone claims ${stake} coins.`);
       floatText(S.pos, `${pays ? '+' : '−'}${stake} 🪙`, pays ? 'good' : 'bad');
       renderTiles();
-      if (!addCoins(pays ? stake : -stake)) return;
+      if (!addCoins(pays ? stake : -stake, pays ? 'The tally stone pays out' : 'The tally stone claims its due')) return;
       break;
     }
     case 'leech':
@@ -1035,7 +1063,7 @@ function resolveLanding(dir, depth, sneak) {
         showNotice('🥷', amt ? `The thief takes ${amt} coins` : 'Nothing to steal',
           'It is standing on your tile. From your next move on it will bolt two tiles each turn, always the way that puts the most ground between you — land exactly on it, before it runs, to take everything back.');
         eggBonusGif();
-        if (amt && !addCoins(-amt)) return;
+        if (amt && !addCoins(-amt, 'A thief springs from a trap and robs you')) return;
       }
       break;
     case 'ferry': {
@@ -1128,7 +1156,7 @@ function meetThief(thief) {
   S.thieves = S.thieves.filter(t => t !== thief);
   positionNPCs();
   if (hasArt('charm')) feedCharge('charm');
-  if (loot && !addCoins(loot)) return false;
+  if (loot && !addCoins(loot, 'You corner the thief and take your purse back')) return false;
   if (S.quest && S.quest.type === 'hunt' && S.turn <= S.quest.deadline) completeQuest();
   return true;
 }
@@ -1328,18 +1356,15 @@ function completeQuest() {
     const pool = artifactPool('reward');
     addMsg(`★ You hand over ${q.due} coins.`);
     floatText(S.pos, `−${q.due} 🪙`, 'bad');
-    S.coins -= q.due;
-    eggCoinGif(-q.due);
-    renderHUD();
-    if (pool.length) {
-      const id = pick(pool);
-      gainArtifact(id);
+    const traded = pool.length ? pick(pool) : null;
+    addCoins(-q.due, traded ? `You hand the collector your coins for ${ARTIFACTS[traded].name}` : 'You hand the collector your coins');
+    if (traded) {
+      gainArtifact(traded);
       S.boardArts++;
-      showNotice(ARTIFACTS[id].icon, `Traded for ${ARTIFACTS[id].name}`, ARTIFACTS[id].desc);
+      showNotice(ARTIFACTS[traded].icon, `Traded for ${ARTIFACTS[traded].name}`, ARTIFACTS[traded].desc);
     } else {
       showNotice('★', 'Collection complete', 'The collector has nothing left worth trading, and returns half your coins.');
-      S.coins += Math.floor(q.due / 2);
-      renderHUD();
+      addCoins(Math.floor(q.due / 2), 'The collector returns half, having nothing to trade');
     }
     if (S.coins < 0) { runLost('Your coins dropped below zero — the debt collectors end your run.'); return; }
     return;
@@ -1348,7 +1373,7 @@ function completeQuest() {
   addMsg(`★ Quest complete! +${q.reward} coins.`);
   floatText(S.pos, `+${q.reward} 🪙`, 'good');
   showNotice('★', 'Quest complete!', `The quest giver pays you ${q.reward} coins${hasArt('seal') ? ' (+3 from the Quest Seal)' : ''}.`);
-  addCoins(q.reward, 'quest');
+  addCoins(q.reward, 'A quest giver pays out', true);
 }
 
 // ---------- merchant shop ----------
@@ -1432,24 +1457,27 @@ function buyItem(i) {
   const p = priceOf(item);
   if (item.sold || S.coins < p) return;
   item.sold = true;
-  S.coins -= p;
-  eggCoinGif(-p);
+  let bought;
   if (item.kind === 'charge') {
     const touched = addCharges(1);   // no entry in purchases: embers are burned, not lent
+    bought = 'a Vial of Embers';
     addMsg(`🔆 The embers recharge ${touched} artifact${touched === 1 ? '' : 's'}.`);
   } else if (item.kind === 'artifact') {
     gainArtifact(item.id);
     S.boardArts++;
     S.purchases.push({ kind: 'artifact', id: item.id, cost: p });
-    addMsg(`Bought ${ARTIFACTS[item.id].icon} ${ARTIFACTS[item.id].name} (refunded on board win).`);
+    bought = `${ARTIFACTS[item.id].icon} ${ARTIFACTS[item.id].name}`;
+    addMsg(`Bought ${bought} (refunded on board win).`);
   } else {
     const card = item.kind === 'special'
       ? { value: SPECIALS[item.id].value, spec: item.id }
       : item.card;
     S.purchases.push({ kind: 'card', card, cost: p });
     S.discard.push(card);
-    addMsg(`Bought a ${cardLabel(card)} card (refunded on board win).`);
+    bought = `a ${cardLabel(card)} card`;
+    addMsg(`Bought ${bought} (refunded on board win).`);
   }
+  addCoins(-p, `You buy ${bought} from the merchant`);
   renderShop();
   renderAll();
 }
@@ -1467,19 +1495,22 @@ function refundPurchases() {
   for (const pu of S.purchases) {
     const value = (pu.kind === 'artifact' && ARTIFACTS[pu.id].refund3x) ? pu.cost * 3 : pu.cost;
     total += value;
-    eggCoinGif(value); // one animation per refunded item, sized to its own value
+    let what;
     if (pu.kind === 'artifact') {
+      what = `${ARTIFACTS[pu.id].icon} ${ARTIFACTS[pu.id].name}`;
       S.artifacts = S.artifacts.filter(id => id !== pu.id);
       delete S.artCharges[pu.id];
     } else {
+      what = `a ${cardLabel(pu.card)} card`;
       for (const pile of [S.draw, S.discard, S.hand]) {
         const k = pile.indexOf(pu.card);
         if (k >= 0) { pile.splice(k, 1); break; }
       }
     }
+    // each item lands as its own line in the tally, and its own animation
+    addCoins(value, `You return ${what} to the merchant${value > pu.cost ? ' at triple price' : ''}`);
   }
   S.purchases = [];
-  S.coins += total;
   return ` The merchant takes back your purchases and refunds ${total} coins.`;
 }
 
@@ -1548,11 +1579,11 @@ function scatterAshes(id) {
       tale = 'The needle spins itself out and buys you 2 extra turns.';
       break;
     case 'clover':
-      S.coins += 9; eggCoinGif(9);
+      addCoins(9, `${a.name} crumbles into coins`);
       tale = 'The withered leaves crumble into 9 coins.';
       break;
     default:
-      S.coins += 5; eggCoinGif(5);
+      addCoins(5, `${a.name} is bought back as a spent husk`);
       tale = 'The spirits of the trail buy the husk back for 5 coins.';
   }
   showNotice(a.icon, `${a.name} burned out`, tale);

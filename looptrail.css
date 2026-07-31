@@ -825,7 +825,13 @@ body.egg #board::before { border-color: rgba(142, 47, 60, .55); }
   color: var(--green);
   margin: 6px 0 4px;
 }
-#notice-text { font-size: 14px; line-height: 1.4; }
+#notice-text {
+  font-size: 14px;
+  line-height: 1.45;
+  white-space: pre-line;   /* one line per coin movement in a batched tally */
+  max-height: 46vh;
+  overflow-y: auto;
+}
 #notice-hint {
   font-size: 11px;
   font-style: italic;
