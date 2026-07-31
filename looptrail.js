@@ -145,6 +145,8 @@ let S = null;
 const hasArt = id => S.artifacts.includes(id);
 const maxHand = () => 5 + (hasArt('satchel') ? 1 : 0) - (hasArt('bond') ? 1 : 0);
 const turnLimit = () => S.board.turnLimit + (hasArt('hourglass') ? 2 : 0) + S.turnMod;
+// a finished quest is worth a quarter of the clock the board started with
+const questTurnBonus = () => Math.max(1, Math.round((S.board.turnLimit + (hasArt('hourglass') ? 2 : 0)) / 4));
 
 // ---------- board generation ----------
 function makeBoard(b) {
@@ -1279,6 +1281,8 @@ function offerQuest(giverTile, cont) {
       break;
     }
   }
+  const gained = questTurnBonus();
+  $('quest-text').textContent += `\n\nAny quest you finish also grants ${gained} extra turn${gained === 1 ? '' : 's'} on this board.`;
   S.questOffer = { quest: q, cont };
   $('quest').hidden = false;
 }
@@ -1340,13 +1344,21 @@ function completeQuest() {
   if (gt && gt.type === 'quest') { gt.done = true; gt.used = true; }
   renderTiles();
 
+  // whatever else it pays, a finished quest always buys you time
+  const gained = questTurnBonus();
+  S.turnMod += gained;
+  addMsg(`⏱️ The quest buys you ${gained} more turn${gained === 1 ? '' : 's'}.`);
+  floatText(S.pos, `+${gained} ⏱️`, 'good');
+  const timeLine = `\n\n⏱️ It also buys you ${gained} more turn${gained === 1 ? '' : 's'} on this board.`;
+  renderHUD();
+
   if (q.type === 'rekindle') {
     // paid in charges rather than coin
     const touched = addCharges(1);
     addMsg(`★ The keeper rekindles ${touched} artifact${touched === 1 ? '' : 's'}.`);
     showNotice('🔆', 'Artifacts rekindled',
-      touched ? `Every relic you carry that holds charges gained one. (${touched} rekindled.)`
-              : 'You carry nothing that holds a charge — the keeper shrugs and wishes you luck.');
+      (touched ? `Every relic you carry that holds charges gained one. (${touched} rekindled.)`
+               : 'You carry nothing that holds a charge — the keeper shrugs and wishes you luck.') + timeLine);
     renderAll();
     return;
   }
@@ -1361,9 +1373,9 @@ function completeQuest() {
     if (traded) {
       gainArtifact(traded);
       S.boardArts++;
-      showNotice(ARTIFACTS[traded].icon, `Traded for ${ARTIFACTS[traded].name}`, ARTIFACTS[traded].desc);
+      showNotice(ARTIFACTS[traded].icon, `Traded for ${ARTIFACTS[traded].name}`, ARTIFACTS[traded].desc + timeLine);
     } else {
-      showNotice('★', 'Collection complete', 'The collector has nothing left worth trading, and returns half your coins.');
+      showNotice('★', 'Collection complete', 'The collector has nothing left worth trading, and returns half your coins.' + timeLine);
       addCoins(Math.floor(q.due / 2), 'The collector returns half, having nothing to trade');
     }
     if (S.coins < 0) { runLost('Your coins dropped below zero — the debt collectors end your run.'); return; }
@@ -1372,7 +1384,8 @@ function completeQuest() {
 
   addMsg(`★ Quest complete! +${q.reward} coins.`);
   floatText(S.pos, `+${q.reward} 🪙`, 'good');
-  showNotice('★', 'Quest complete!', `The quest giver pays you ${q.reward} coins${hasArt('seal') ? ' (+3 from the Quest Seal)' : ''}.`);
+  showNotice('★', 'Quest complete!',
+    `The quest giver pays you ${q.reward} coins${hasArt('seal') ? ' (+3 from the Quest Seal)' : ''}.` + timeLine);
   addCoins(q.reward, 'A quest giver pays out', true);
 }
 
@@ -1616,11 +1629,16 @@ function burnCharges() {
 function boardWon() {
   S.over = true;
   saveBest(S.boardIndex);
+  const spare = Math.max(0, turnLimit() - S.turn);   // measured before ashes tinker with the clock
   settlePurchases(refundNote => {
     const expiredNote = burnCharges();
+    // the time you did not need is paid out in coin
+    if (spare) addCoins(spare, `You finish with ${spare} turn${spare === 1 ? '' : 's'} to spare`);
     renderAll();
-    showNotice('🏁', `Board ${S.boardIndex} complete!`, `${objectiveDesc()} Done with ${turnLimit() - S.turn} turn(s) to spare.`);
-    showReward(refundNote + expiredNote);
+    showNotice('🏁', `Board ${S.boardIndex} complete!`,
+      `${objectiveDesc()} Done with ${spare} turn${spare === 1 ? '' : 's'} to spare.` +
+      (spare ? `\n\n⏱️ Unused time pays out: +${spare} coins.` : ''));
+    showReward(refundNote + expiredNote + (spare ? ` ⏱️ ${spare} unused turn(s) paid out ${spare} coins.` : ''));
   });
 }
 
