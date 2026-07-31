@@ -177,6 +177,52 @@ body.egg #center-msg {
   line-height: 1;
 }
 
+/* engraved glyphs: monochrome art tinted by whatever carries it */
+.ico {
+  width: 66%;
+  height: 66%;
+  fill: currentColor;
+  display: block;
+  filter: drop-shadow(0 1px 0 rgba(255, 255, 255, .35));
+}
+/* sitting in a line of prose rather than filling a container */
+.ico.inline {
+  display: inline-block;
+  width: 1.05em;
+  height: 1.05em;
+  vertical-align: -.18em;
+  filter: none;
+}
+.ico.big { width: 40px; height: 40px; filter: none; }
+#notice-icon { display: flex; justify-content: center; color: var(--green); }
+body.egg #notice-icon { color: #e0a9ff; }
+.tile > .ico { opacity: .88; }
+.tile.t-start   { color: #5e4a10; }
+.tile.t-artifact{ color: #4a2d63; }
+.tile.t-draw    { color: #2c5626; }
+.tile.t-discard { color: #7a2f24; }
+.tile.t-slide,
+.tile.t-gust    { color: #274a63; }
+.tile.t-quest   { color: #6e5410; }
+.tile.t-trap    { color: #6b2a12; }
+.tile.t-ferry   { color: #1c4a56; }
+.tile.t-boon    { color: #1e5638; }
+.tile.t-haste   { color: #7a4410; }
+.tile.t-leech   { color: #46216b; }
+body.egg .tile > .ico { filter: drop-shadow(0 1px 0 rgba(0, 0, 0, .5)); opacity: .95; }
+body.egg .tile.t-start   { color: #ffe9a0; }
+body.egg .tile.t-artifact{ color: #d9aef0; }
+body.egg .tile.t-draw    { color: #93d69a; }
+body.egg .tile.t-discard { color: #f0a08e; }
+body.egg .tile.t-slide,
+body.egg .tile.t-gust    { color: #93c2e0; }
+body.egg .tile.t-quest   { color: #ffd98e; }
+body.egg .tile.t-trap    { color: #ffab8a; }
+body.egg .tile.t-ferry   { color: #8fd6e0; }
+body.egg .tile.t-boon    { color: #8fe0b4; }
+body.egg .tile.t-haste   { color: #f0c088; }
+body.egg .tile.t-leech   { color: #cba6ec; }
+
 /* drawn coin with the amount inside */
 .tile > .coin-disc {
   width: 68%;
@@ -296,17 +342,18 @@ body.egg .v-badge { background: #7a3496; border-color: #ff9e5e; }
 }
 
 /* NPC tokens */
+.npc > .ico { width: 74%; height: 74%; filter: none; }
 .npc {
   position: absolute;
-  width: calc(var(--tile-size, 44px) * .58);
-  height: calc(var(--tile-size, 44px) * .58);
-  margin-left: calc(var(--tile-size, 44px) * -.29);
-  margin-top: calc(var(--tile-size, 44px) * -.29);
+  width: calc(var(--tile-size, 44px) * .62);
+  height: calc(var(--tile-size, 44px) * .62);
+  margin-left: calc(var(--tile-size, 44px) * -.31);
+  margin-top: calc(var(--tile-size, 44px) * -.31);
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: calc(var(--tile-size, 44px) * .36);
+  color: #fdf6e3;
   z-index: 9;
   pointer-events: none;
   transition: left .45s ease, top .45s ease;
@@ -316,12 +363,14 @@ body.egg .v-badge { background: #7a3496; border-color: #ff9e5e; }
 .npc.merchant {
   background: radial-gradient(circle at 35% 30%, #ffe9a0, #e3b53e 75%);
   border-color: #8a6d1a;
+  color: #4a3708;
   box-shadow: inset 0 0 0 2px rgba(255,255,255,.35), 0 2px 4px rgba(0,0,0,.35);
   transform: translate(30%, -30%);
 }
 .npc.grinder {
   background: radial-gradient(circle at 35% 30%, #cfd6da, #7b878e 75%);
   border-color: #414a50;
+  color: #21282c;
   box-shadow: inset 0 0 0 2px rgba(255,255,255,.3), 0 2px 4px rgba(0,0,0,.4);
   transform: translate(30%, 30%);
 }
@@ -612,10 +661,14 @@ body.egg #objective-bar {
   background: #efe2f5;
   border: 2px solid #6d4d8a;
   border-radius: 8px;
-  padding: 2px 8px;
-  font-size: 15px;
+  padding: 3px;
+  width: 30px;
+  height: 30px;
+  color: #4a2d63;
   cursor: pointer;
 }
+.artifact-chip > .ico { width: 100%; height: 100%; filter: none; }
+body.egg .artifact-chip { color: #e0c2f5; }
 .artifact-chip .charge {
   position: absolute;
   top: -7px;
@@ -716,6 +769,16 @@ body.egg .menu-panel .logo::after { color: #ff9e5e; }
 }
 .btn:active { transform: translateY(2px); box-shadow: 0 1px 2px rgba(0,0,0,.3); }
 .btn-big { font-size: 21px; padding: 14px 34px; }
+
+.credits {
+  margin-top: 18px;
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: #7a6a44;
+  font-style: italic;
+}
+.credits a { color: inherit; }
+body.egg .credits { color: #9b86ad; }
 
 .howto {
   text-align: left;
