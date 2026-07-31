@@ -274,6 +274,8 @@ body.egg .v-badge { background: #7a3496; border-color: #ff9e5e; }
   filter: saturate(.2);
 }
 .tile.used > span { visibility: hidden; }
+/* a sprung trap stays legible so you know it is spent, not lurking */
+.tile.t-trap.used > span { visibility: visible; opacity: .45; }
 .tile.q-mark { box-shadow: 0 0 0 3px var(--gold), 0 2px 3px rgba(58,47,27,.25); }
 .q-badge {
   position: absolute;

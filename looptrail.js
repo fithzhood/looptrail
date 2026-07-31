@@ -154,7 +154,8 @@ function makeBoard(b) {
 
   // objective — never the same type twice in a row
   const lastType = (S && S.board) ? S.board.objective.type : null;
-  const types = ['laps', 'coins', 'arts', 'quests', 'survive', 'visit', 'home', 'purity'];
+  // nothing here may hinge on completing a lap — the lap dial is a compass, not a scoreboard
+  const types = ['coins', 'arts', 'quests', 'survive', 'visit', 'home'];
   if (S && S.coins >= 10) types.push('spend'); // needs a purse worth halving
   if (S) types.push('precision');
   if (EGG.active && EGG.gifs.length) types.push('film');
@@ -162,7 +163,6 @@ function makeBoard(b) {
 
   let target, limit;
   switch (type) {
-    case 'laps':    target = easy ? 1 : 2 + Math.floor(b / 5); limit = target * Math.ceil(size / 3) + 6; break;
     case 'coins':   target = (S ? S.coins : 5) + (easy ? 7 : 9) + 2 * b; limit = 13 + Math.floor(b / 2); break;
     case 'arts':    target = b < 3 ? 1 : (b < 9 ? 2 : 3);      limit = 6 + target * 5; break;
     case 'quests':  target = b < 4 ? 1 : 2;                    limit = 6 + target * 7; break;
@@ -170,7 +170,6 @@ function makeBoard(b) {
     case 'visit':   target = Math.min(size - 4, (easy ? 6 : 8) + b); limit = target + 5; break;
     case 'home':    target = b < 6 ? 2 : 3;                    limit = target * 5 + 2; break;
     case 'spend':   target = Math.round(S.coins / 2);          limit = 12 + Math.floor(b / 2); break;
-    case 'purity':  target = b < 6 ? 1 : 2;                    limit = target * Math.ceil(size / 3) + 8; break;
     case 'precision': target = Math.max(3, S.coins + rand(4, 10)); limit = 14 + Math.floor(b / 2); break;
     case 'film':    target = 12 + 4 * b;                       limit = 14 + Math.floor(b / 2); break;
   }
@@ -199,8 +198,7 @@ function makeBoard(b) {
     add(crit, { type: 'loss', half: true }, 2);
     add(crit, { type: 'trap' }, 3 + (b > 5 ? 1 : 0));
   } else {
-    // a purity board is seeded with more tolls to dodge, but not a gauntlet
-    addEach(extra, () => ({ type: 'loss', amt: lossAmt() }), 3 + Math.floor(b / 3) + (type === 'purity' ? 2 : 0));
+    addEach(extra, () => ({ type: 'loss', amt: lossAmt() }), 3 + Math.floor(b / 3));
     add(extra, { type: 'trap' }, 1 + (b > 5 ? 1 : 0));
   }
   add(extra, { type: 'tally' }, 1);
@@ -229,7 +227,6 @@ function makeBoard(b) {
 function objectiveDesc() {
   const o = S.board.objective;
   switch (o.type) {
-    case 'laps':    return `Complete ${o.target} lap${o.target > 1 ? 's' : ''} of the loop.`;
     case 'coins':   return `Build your purse up to ${o.target} coins.`;
     case 'arts':    return `Pick up ${o.target} artifact${o.target > 1 ? 's' : ''} on this board.`;
     case 'quests':  return `Complete ${o.target} quest${o.target > 1 ? 's' : ''}.`;
@@ -237,7 +234,6 @@ function objectiveDesc() {
     case 'visit':   return `Visit ${o.target} different tiles.`;
     case 'home':    return `Land on the start tile ⌂ ${o.target} times.`;
     case 'spend':   return `Spend your way down to ${o.target} coins.`;
-    case 'purity':  return `Ride ${o.target} clean lap${o.target > 1 ? 's' : ''} — lose a coin and the lap restarts.`;
     case 'precision': return `Finish holding exactly ${o.target} coins.`;
     case 'film':    return `Sit through ${o.target} seconds of animation on this board.`;
   }
@@ -246,7 +242,6 @@ function objectiveDesc() {
 function objProgress() {
   const o = S.board.objective;
   switch (o.type) {
-    case 'laps':    return S.lapsDone;
     case 'coins':   return S.coins;
     case 'arts':    return S.boardArts;
     case 'quests':  return S.boardQuests;
@@ -254,7 +249,6 @@ function objProgress() {
     case 'visit':   return S.visited.size;
     case 'home':    return S.homeLands;
     case 'spend':   return S.coins;
-    case 'purity':  return S.pureLaps;
     case 'precision': return S.coins;
     case 'film':    return S.boardGifSecs;
   }
@@ -271,7 +265,6 @@ function objectiveMet() {
 function objectiveStatus() {
   const o = S.board.objective;
   if (o.type === 'spend' || o.type === 'precision' || o.type === 'coins') return `now ${S.coins} 🪙`;
-  if (o.type === 'purity') return `${S.pureLaps}/${o.target}${S.lostThisLap ? ' · lap tainted' : ''}`;
   if (o.type === 'film') return `${S.boardGifSecs}s / ${o.target}s`;
   return `${Math.min(objProgress(), o.target)}/${o.target}`;
 }
@@ -296,7 +289,7 @@ function startRun() {
     busy: false,
     over: false,
     forcedDir: 0,
-    thief: null,
+    thieves: [],
     quest: null,
     questOffer: null,
     pendingDiscard: null,
@@ -308,8 +301,6 @@ function startRun() {
     homeLands: 0,
     turnMod: 0,       // turns gained/sold on this board
     echoAgain: 0,     // pending Long Echo re-triggers
-    pureLaps: 0,      // laps ridden without losing a coin
-    lostThisLap: false,
     boardGifSecs: 0,  // animation seconds watched on this board
     visited: new Set([0]),
     msgs: [],
@@ -333,7 +324,7 @@ function nextBoard() {
   S.lapsDone = 0;
   S.over = false;
   S.forcedDir = 0;
-  S.thief = null;
+  S.thieves = [];
   S.quest = null;
   S.pendingDiscard = null;
   S.pendingGrind = false;
@@ -344,8 +335,6 @@ function nextBoard() {
   S.homeLands = 0;
   S.turnMod = 0;
   S.echoAgain = 0;
-  S.pureLaps = 0;
-  S.lostThisLap = false;
   S.boardGifSecs = 0;
   S.visited = new Set([0]);
   S.draw = shuffle(S.draw.concat(S.discard, S.hand));
@@ -369,7 +358,7 @@ function addCoins(n, src) {
   if (n > 0 && src === 'quest' && hasArt('seal')) n += 3;
   S.coins += n;
   if (n > 0) S.boardCoins += n;
-  if (n < 0) { breakVow(); S.lostThisLap = true; }
+  if (n < 0) breakVow();
   eggCoinGif(n);
   renderHUD();
   const el = $('hud-coins');
@@ -511,14 +500,19 @@ function buildBoardDOM() {
   renderTiles();
 }
 
-function ensureThiefEl() {
-  if (!document.getElementById('npc-thief')) {
+// one token per thief on the board; they all stay until cornered
+function syncThiefEls() {
+  const board = $('board');
+  const els = [...board.querySelectorAll('.npc.thief')];
+  while (els.length < S.thieves.length) {
     const t = document.createElement('div');
     t.className = 'npc thief';
-    t.id = 'npc-thief';
     t.textContent = '🥷';
-    $('board').appendChild(t);
+    board.appendChild(t);
+    els.push(t);
   }
+  while (els.length > S.thieves.length) els.pop().remove();
+  return els;
 }
 
 function layoutBoard() {
@@ -558,19 +552,14 @@ function positionNPCs() {
       g.style.display = 'none';
     }
   }
-  const th = document.getElementById('npc-thief');
-  if (th) {
-    if (S.thief) {
-      const { x, y } = tileCenter(S.thief.pos);
-      th.style.left = x + '%';
-      th.style.top = y + '%';
-      th.style.display = '';
-      th.classList.toggle('loaded', S.thief.loot > 0);
-      th.innerHTML = S.thief.loot > 0 ? `🥷<span class="loot">${S.thief.loot}</span>` : '🥷';
-    } else {
-      th.style.display = 'none';
-    }
-  }
+  syncThiefEls().forEach((el, i) => {
+    const th = S.thieves[i];
+    const { x, y } = tileCenter(th.pos);
+    el.style.left = x + '%';
+    el.style.top = y + '%';
+    el.classList.toggle('loaded', th.loot > 0);
+    el.innerHTML = th.loot > 0 ? `🥷<span class="loot">${th.loot}</span>` : '🥷';
+  });
 }
 
 function renderTiles() {
@@ -864,8 +853,6 @@ function updateLaps() {
   while (Math.abs(S.net) >= n) {
     S.net -= Math.sign(S.net) * n;
     S.lapsDone++;
-    if (!S.lostThisLap) S.pureLaps++;
-    S.lostThisLap = false;   // a fresh lap starts clean either way
     addMsg('➰ Lap complete!');
     floatText(S.pos, '➰', 'good');
     if (hasArt('idol')) {
@@ -1040,9 +1027,8 @@ function resolveLanding(dir, depth, sneak) {
         let amt = S.board.hardThief ? rand(6, 10) : rand(3, 6);
         if (hasArt('charm')) amt = Math.ceil(amt / 2);
         amt = Math.min(amt, Math.max(0, S.coins));   // it can empty your purse, never bury you
-        // the thief springs out right where you stand and is gone with the coins
-        S.thief = { pos: S.pos, loot: amt, fresh: true };
-        ensureThiefEl();
+        // a fresh thief springs out right where you stand; any earlier ones stay out too
+        S.thieves.push({ pos: S.pos, loot: amt, fresh: true });
         addMsg(amt ? `⚠️ A trap! A thief springs out and lifts ${amt} coins.`
                    : '⚠️ A trap! A thief springs out, finds your purse empty and stays put.');
         floatText(S.pos, amt ? `−${amt} 🪙` : '∅', 'bad');
@@ -1096,8 +1082,9 @@ function afterEffects() {
     return;
   }
   // caught only if you end your move on it — and not on the turn it sprang out
-  if (S.thief && !S.thief.fresh && S.thief.pos === S.pos) {
-    if (!meetThief()) return;
+  const caught = S.thieves.find(t => !t.fresh && t.pos === S.pos);
+  if (caught) {
+    if (!meetThief(caught)) return;
     if (S.over) return;
   }
   if (S.board.grinder && S.board.grinder.pos === S.pos && S.hand.length) {
@@ -1130,15 +1117,15 @@ function finishTurn() {
 
 // Landing on the thief before it runs gets the whole purse back.
 // Returns false if the run ended.
-function meetThief() {
-  const loot = S.thief.loot;
+function meetThief(thief) {
+  const loot = thief.loot;
   eggBonusGif();
   addMsg(loot ? `🥷 You corner the thief and take back your ${loot} coins!` : '🥷 You corner the thief and it slips away empty-handed.');
   floatText(S.pos, loot ? `+${loot} 🪙` : '🥷', 'good');
   showNotice('🥷', 'Thief cornered', loot
     ? `You catch it flat-footed and recover all ${loot} coins.`
     : 'It had nothing on it, but at least it is gone.');
-  S.thief = null;
+  S.thieves = S.thieves.filter(t => t !== thief);
   positionNPCs();
   if (hasArt('charm')) feedCharge('charm');
   if (loot && !addCoins(loot)) return false;
@@ -1151,20 +1138,20 @@ function moveNPCs() {
   if (S.board.merchant) {
     S.board.merchant.pos = mod(S.board.merchant.pos + 1, n);
   }
-  if (S.thief) {
-    if (S.thief.fresh) {
+  const gap = t => { const d = mod(t - S.pos, n); return Math.min(d, n - d); };
+  for (const th of S.thieves) {
+    if (th.fresh) {
       // the turn it appears it stays put, sharing your tile
-      S.thief.fresh = false;
-    } else {
-      // two tiles whichever way opens the most ground between it and where you
-      // now stand — and never onto your tile
-      const gap = t => { const d = mod(t - S.pos, n); return Math.min(d, n - d); };
-      const cw = mod(S.thief.pos + 2, n);
-      const ccw = mod(S.thief.pos - 2, n);
-      if (cw === S.pos) S.thief.pos = ccw;
-      else if (ccw === S.pos) S.thief.pos = cw;
-      else S.thief.pos = gap(cw) >= gap(ccw) ? cw : ccw;
+      th.fresh = false;
+      continue;
     }
+    // two tiles whichever way opens the most ground between it and where you
+    // now stand — and never onto your tile
+    const cw = mod(th.pos + 2, n);
+    const ccw = mod(th.pos - 2, n);
+    if (cw === S.pos) th.pos = ccw;
+    else if (ccw === S.pos) th.pos = cw;
+    else th.pos = gap(cw) >= gap(ccw) ? cw : ccw;
   }
   positionNPCs();
 }
@@ -1212,7 +1199,7 @@ function offerQuest(giverTile, cont) {
   const bonus = 2 * (S.boardIndex - 1);
   const kinds = ['relay', 'delivery', 'vow'];
   if (artifactPool('reward').length && S.coins >= 6) kinds.push('collection');
-  if (!S.board.hardThief || S.thief) kinds.push('hunt');
+  if (!S.board.hardThief || S.thieves.length) kinds.push('hunt');
   if (S.artifacts.some(holdsCharges)) kinds.push('rekindle');
   let q;
   switch (pick(kinds)) {
@@ -1275,9 +1262,8 @@ function acceptQuest() {
   $('quest').hidden = true;
   addMsg('★ Quest accepted!');
   // a hunt needs prey: if no thief is about, one is flushed out of hiding
-  if (S.quest.type === 'hunt' && !S.thief) {
-    S.thief = { pos: mod(S.pos + Math.floor(S.board.size / 2), S.board.size), loot: rand(3, 6), fresh: false };
-    ensureThiefEl();
+  if (S.quest.type === 'hunt' && !S.thieves.length) {
+    S.thieves.push({ pos: mod(S.pos + Math.floor(S.board.size / 2), S.board.size), loot: rand(3, 6), fresh: false });
     addMsg('🥷 A thief breaks cover across the loop, someone else\'s purse in hand.');
   }
   renderAll();
