@@ -20,7 +20,7 @@ const ARTIFACTS = {
   quill:     { name: 'Oaken Quill',       icon: '🪶', desc: 'Draw an extra card each turn (up to your hand limit).', shopOnly: true },
   bond:      { name: "Merchant's Bond",   icon: '🧰', desc: 'A heavy strongbox: −1 max hand size while you carry it. The merchant buys it back at TRIPLE price when you complete the board.', shopOnly: true, refund3x: true },
   clover:    { name: 'Lucky Clover',      icon: '🍀', desc: '+1 coin whenever you gain coins (+2 while overcharged). Gains a charge on every quest you complete.', charges: 3 },
-  idol:      { name: 'Green Idol',        icon: '🗿', desc: '+2 coins each time you complete a lap (+3 while overcharged), and every lap feeds it a charge.', charges: 3 },
+  idol:      { name: 'Green Idol',        icon: '🗿', desc: 'Never spends charges — it gains one on every completed lap, and each lap pays three coins for every charge it holds.', charges: 0, noBurn: true },
   hourglass: { name: 'Patient Hourglass', icon: '⏳', desc: '+2 turn limit on every board.' },
   charm:     { name: 'Thief Charm',       icon: '🧿', desc: 'Thieves take only half as much when they spring on you. Cornering one feeds it a charge.', charges: 3 },
   ring:      { name: 'Bargain Ring',      icon: '💍', desc: 'Merchant prices reduced by 2 (min 1).' },
@@ -80,7 +80,7 @@ function artifactPool(src) {
 
 const SPECIALS = {
   echo:   { value: 0, name: 'Echo',      desc: 'Stay in place and trigger this tile again.' },
-  charge: { value: 6, name: 'Charge',    desc: 'Move 6 tiles — clockwise only.' },
+  charge: { value: 6, name: 'Charge',    desc: 'Move 6 tiles — clockwise only, unless the wind says otherwise.', dir: 1 },
   cycle:  { value: 1, name: 'Cycle',     desc: 'Draw a card and discard a card, then move 1.' },
   sneak:  { value: 2, name: 'Soft Step', desc: 'Move 2 without triggering the tile you land on.' },
   stride: { value: 3, name: 'Stride',    desc: 'Move 3, then draw a card.', shopOnly: true },
@@ -94,6 +94,12 @@ const SPECIALS = {
 // Merchant's Pace grows with the board clock; everything else is fixed
 const cardValue = c => c.spec === 'pace' ? Math.max(1, S.turn) : c.value;
 const isGlass = c => !!(c.glass || (c.spec && SPECIALS[c.spec].glass));
+// a special's built-in one-way rule lives on the card, so a gust can overwrite it
+function makeSpecial(id) {
+  const c = { value: SPECIALS[id].value, spec: id };
+  if (SPECIALS[id].dir) c.dir = SPECIALS[id].dir;
+  return c;
+}
 const cardName = c => c.spec ? SPECIALS[c.spec].name : `${c.value}`;
 const glassOdds = () => hasArt('resin') ? 0.05 : 0.25;
 
@@ -152,7 +158,9 @@ const questTurnBonus = () => Math.max(1, Math.round((S.board.turnLimit + (hasArt
 function makeBoard(b) {
   // rubber-band: after a decent previous run, the first boards are brisk
   const easy = (saveData.best || 0) >= 3 && b <= 2;
-  const size = easy ? 14 : Math.min(24, 15 + b);
+  // sizes wander rather than climbing in lockstep — the average still grows
+  const size = easy ? rand(12, 14)
+                    : Math.max(12, Math.min(26, Math.round(14 + b * 0.8) + rand(-3, 3)));
 
   // objective — never the same type twice in a row
   const lastType = (S && S.board) ? S.board.objective.type : null;
@@ -223,7 +231,9 @@ function makeBoard(b) {
   // the whetstone shows up more often once the deck is getting bloated
   const deckSize = S ? S.draw.length + S.discard.length + S.hand.length : 10;
   const grinder = Math.random() < (deckSize > 13 ? 0.65 : 0.3) ? { pos: rand(2, size - 2) } : null;
-  return { size, tiles, objective, turnLimit: limit, merchant, grinder, hardThief: hell };
+  // surviving means outrunning something: the assassin only stalks these boards
+  const assassin = hell ? { pos: Math.floor(size / 2) } : null;
+  return { size, tiles, objective, turnLimit: limit, merchant, grinder, assassin, hardThief: hell };
 }
 
 function objectiveDesc() {
@@ -232,7 +242,7 @@ function objectiveDesc() {
     case 'coins':   return `Build your purse up to ${o.target} coins.`;
     case 'arts':    return `Pick up ${o.target} artifact${o.target > 1 ? 's' : ''} on this board.`;
     case 'quests':  return `Complete ${o.target} quest${o.target > 1 ? 's' : ''}.`;
-    case 'survive': return `Survive ${o.target} turns.`;
+    case 'survive': return `Survive ${o.target} turns with an assassin 🗡️ on your heels.`;
     case 'visit':   return `Visit ${o.target} different tiles.`;
     case 'home':    return `Land on the start tile ⌂ ${o.target} times.`;
     case 'spend':   return `Spend your way down to ${o.target} coins.`;
@@ -290,7 +300,6 @@ function startRun() {
     selected: null,
     busy: false,
     over: false,
-    forcedDir: 0,
     thieves: [],
     quest: null,
     questOffer: null,
@@ -325,7 +334,6 @@ function nextBoard() {
   S.net = 0;
   S.lapsDone = 0;
   S.over = false;
-  S.forcedDir = 0;
   S.thieves = [];
   S.quest = null;
   S.pendingDiscard = null;
@@ -342,6 +350,12 @@ function nextBoard() {
   S.draw = shuffle(S.draw.concat(S.discard, S.hand));
   S.discard = [];
   S.hand = [];
+  // the wind's grip lasts only as long as the board that blew it
+  S.draw.forEach(c => {
+    if (c.baseDir === undefined) return;
+    if (c.baseDir === null) delete c.dir; else c.dir = c.baseDir;
+    delete c.baseDir;
+  });
   for (let i = 0; i < 2; i++) drawCard(true);
   $('result').hidden = true;
   $('reward').hidden = true;
@@ -446,13 +460,6 @@ function beginTurn(first) {
     const extra = drawCard(true);
     if (extra) addMsg(`🪶 Quill draws an extra ${cardLabel(extra)}.`);
   }
-  // a gust can't lock the player out entirely (e.g. only Charge cards in hand)
-  if (S.forcedDir && S.hand.length && S.hand.every(cd => reachableFrom(cd).length === 0)) {
-    S.forcedDir = 0;
-    addMsg('🌀 The gust dies down — you can move freely.');
-  } else if (S.forcedDir) {
-    addMsg(`🌀 The gust forces your next move ${S.forcedDir === 1 ? 'clockwise ↻' : 'counterclockwise ↺'}.`);
-  }
   if (S.quest && S.quest.type === 'delivery') {
     if (S.turn > S.quest.deadline) {
       addMsg('🚩 Too late — the delivery quest failed.');
@@ -531,6 +538,13 @@ function buildBoardDOM() {
     g.textContent = '🪓';
     board.appendChild(g);
   }
+  if (S.board.assassin) {
+    const a = document.createElement('div');
+    a.className = 'npc assassin';
+    a.id = 'npc-assassin';
+    a.textContent = '🗡️';
+    board.appendChild(a);
+  }
   layoutBoard();
   renderTiles();
 }
@@ -586,6 +600,12 @@ function positionNPCs() {
     } else {
       g.style.display = 'none';
     }
+  }
+  const as = document.getElementById('npc-assassin');
+  if (as && S.board.assassin) {
+    const { x, y } = tileCenter(S.board.assassin.pos);
+    as.style.left = x + '%';
+    as.style.top = y + '%';
   }
   syncThiefEls().forEach((el, i) => {
     const th = S.thieves[i];
@@ -660,9 +680,7 @@ function reachableFrom(card) {
   const opts = [];
   const push = (dist, dir) => {
     if (dist <= 0) return;
-    if (S.forcedDir && S.forcedDir !== dir) return;   // a gust locks the direction
     if (card.dir && card.dir !== dir) return;         // one-way cards
-    if (dir === -1 && card.spec === 'charge') return;
     const tile = mod(S.pos + dist * dir, n);
     if (!opts.some(o => o.tile === tile)) opts.push({ tile, dir, dist });
   };
@@ -701,7 +719,7 @@ function tileInfo(t) {
     case 'draw':     return ['🃏 Draw', t.used ? 'Already used.' : 'Draw a card (one-time).'];
     case 'discard':  return ['✂️ Discard', t.used ? 'Already used.' : 'Discard a card of your choice (one-time).'];
     case 'slide':    return ['➤ Slide', `Slides you ${t.amt} tiles onward in your direction of travel.`];
-    case 'gust':     return ['🌀 Gust', 'A gust locks the direction of your next move.'];
+    case 'gust':     return ['🌀 Gust', 'Bends every card in your hand to one direction. They stay bent for the rest of the board, even after they cycle back through your deck.'];
     case 'boon':     return ['⏱️ Waystone', t.used ? 'Already claimed.' : `Grants ${t.amt} extra turns to finish the board (one-time).`];
     case 'haste':    return ['⌛ Time Broker', t.used ? 'Already traded.' : `Sells ${t.amt} of your remaining turns and pays you coins equal to the current turn number (one-time).`];
     case 'quest':    return ['★ Quest', t.done ? 'Quest completed.' : 'A quest giver — land here to hear the offer.'];
@@ -734,7 +752,6 @@ function playCard(handIdx, opt) {
   if (!shattered) S.discard.push(card);
   S.selected = null;
   S.busy = true;
-  S.forcedDir = 0;
   clearHighlights();
   renderHand();
   if (shattered) {
@@ -893,9 +910,11 @@ function updateLaps() {
     addMsg('➰ Lap complete!');
     floatText(S.pos, '➰', 'good');
     if (hasArt('idol')) {
-      const pay = overcharged('idol') ? 3 : 2;
+      // the idol fattens on laps rather than burning down with the boards
+      S.artCharges.idol = (S.artCharges.idol || 0) + 1;
+      const pay = S.artCharges.idol * 3;
       addMsg(`🗿 The Green Idol pays you ${pay} coins.`);
-      feedCharge('idol');
+      floatText(S.pos, '🗿+', 'good');
       if (!addCoins(pay, '🗿 The Green Idol blesses a completed lap')) return;
     }
   }
@@ -1054,8 +1073,17 @@ function resolveLanding(dir, depth, sneak) {
       if (hasArt('compass')) {
         addMsg('🧭 Your compass steadies you against the gust.');
       } else {
-        S.forcedDir = pick([1, -1]);
-        addMsg(`🌀 A gust! Your next move must go ${S.forcedDir === 1 ? 'clockwise ↻' : 'counterclockwise ↺'}.`);
+        // the wind rewrites the cards you are holding instead of fencing you in,
+        // so there is always somewhere to go
+        const way = pick([1, -1]);
+        S.hand.forEach(c => {
+          if (c.baseDir === undefined) c.baseDir = c.dir === undefined ? null : c.dir;
+          c.dir = way;
+        });
+        const arrow = way === 1 ? 'clockwise ↻' : 'counterclockwise ↺';
+        addMsg(`🌀 A gust bends every card in your hand ${arrow}.`);
+        showNotice('🌀', 'A gust rewrites your hand',
+          `The cards you are holding are bent ${arrow} — and they stay that way for the rest of the board, even after they cycle back through your deck.`);
       }
       break;
     case 'trap':
@@ -1110,8 +1138,19 @@ function resolveLanding(dir, depth, sneak) {
   done();
 }
 
+// the blade only has to touch you once — checked after your move and after its own
+function assassinStrikes(when) {
+  if (!S.board.assassin || S.board.assassin.pos !== S.pos) return false;
+  S.busy = false;
+  runLost(when === 'player'
+    ? 'You walked straight onto the assassin\'s blade.'
+    : 'The assassin ran you down and finished it.');
+  return true;
+}
+
 function afterEffects() {
   if (S.over) return;
+  if (assassinStrikes('player')) return;   // check one: where your move left you
   renderAll();
   if (S.echoAgain > 0) {   // Long Echo: hit the same tile again before the turn ends
     S.echoAgain--;
@@ -1174,6 +1213,15 @@ function moveNPCs() {
   const n = S.board.size;
   if (S.board.merchant) {
     S.board.merchant.pos = mod(S.board.merchant.pos + 1, n);
+  }
+  if (S.board.assassin) {
+    // two tiles along the shorter way round, straight at you
+    let d = mod(S.pos - S.board.assassin.pos, n);
+    if (d > n / 2) d -= n;
+    const step = Math.sign(d) * Math.min(Math.abs(d), 2);
+    S.board.assassin.pos = mod(S.board.assassin.pos + step, n);
+    positionNPCs();
+    if (assassinStrikes('assassin')) return;   // check two: where its move left it
   }
   const gap = t => { const d = mod(t - S.pos, n); return Math.min(d, n - d); };
   for (const th of S.thieves) {
@@ -1490,7 +1538,7 @@ function buyItem(i) {
     addMsg(`Bought ${bought} (refunded on board win).`);
   } else {
     const card = item.kind === 'special'
-      ? { value: SPECIALS[item.id].value, spec: item.id }
+      ? makeSpecial(item.id)
       : item.card;
     S.purchases.push({ kind: 'card', card, cost: p });
     S.discard.push(card);
@@ -1619,6 +1667,7 @@ function burnCharges() {
       if (EGG.active) eggEnqueue(S.artCharges[id], false);
       continue;
     }
+    if (ARTIFACTS[id].noBurn) continue;       // fed by deeds, not drained by boards
     if (warded && id !== 'warden') continue;  // the sigil takes the toll for everyone
     S.artCharges[id] = (S.artCharges[id] || 1) - 1;
     if (S.artCharges[id] <= 0) {
@@ -1715,7 +1764,7 @@ function showReward(spare) {
     btn.textContent = 'Take';
     btn.addEventListener('click', () => {
       if (offer.kind === 'artifact') gainArtifact(offer.id);
-      else if (offer.kind === 'special') S.discard.push({ value: SPECIALS[offer.id].value, spec: offer.id });
+      else if (offer.kind === 'special') S.discard.push(makeSpecial(offer.id));
       else S.discard.push({ value: offer.value });
       nextBoard();
     });
