@@ -306,7 +306,6 @@ function startRun() {
     boardArts: 0,
     boardQuests: 0,
     homeLands: 0,
-    lastDir: 1,       // direction of the player's most recent move
     turnMod: 0,       // turns gained/sold on this board
     echoAgain: 0,     // pending Long Echo re-triggers
     pureLaps: 0,      // laps ridden without losing a coin
@@ -712,7 +711,6 @@ function playCard(handIdx, opt) {
   S.selected = null;
   S.busy = true;
   S.forcedDir = 0;
-  S.lastDir = opt.dir;      // the thief bolts against this
   clearHighlights();
   renderHand();
   if (shattered) {
@@ -1049,7 +1047,7 @@ function resolveLanding(dir, depth, sneak) {
                    : '⚠️ A trap! A thief springs out, finds your purse empty and stays put.');
         floatText(S.pos, amt ? `−${amt} 🪙` : '∅', 'bad');
         showNotice('🥷', amt ? `The thief takes ${amt} coins` : 'Nothing to steal',
-          'It is standing on your tile. From your next move on it will bolt two tiles the opposite way each turn — land exactly on it, before it runs, to take everything back.');
+          'It is standing on your tile. From your next move on it will bolt two tiles each turn, always the way that puts the most ground between you — land exactly on it, before it runs, to take everything back.');
         eggBonusGif();
         if (amt && !addCoins(-amt)) return;
       }
@@ -1158,8 +1156,14 @@ function moveNPCs() {
       // the turn it appears it stays put, sharing your tile
       S.thief.fresh = false;
     } else {
-      // it always bolts two tiles against the way you just travelled
-      S.thief.pos = mod(S.thief.pos - S.lastDir * 2, n);
+      // two tiles whichever way opens the most ground between it and where you
+      // now stand — and never onto your tile
+      const gap = t => { const d = mod(t - S.pos, n); return Math.min(d, n - d); };
+      const cw = mod(S.thief.pos + 2, n);
+      const ccw = mod(S.thief.pos - 2, n);
+      if (cw === S.pos) S.thief.pos = ccw;
+      else if (ccw === S.pos) S.thief.pos = cw;
+      else S.thief.pos = gap(cw) >= gap(ccw) ? cw : ccw;
     }
   }
   positionNPCs();
