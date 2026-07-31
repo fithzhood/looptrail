@@ -22,7 +22,7 @@ const ARTIFACTS = {
   clover:    { name: 'Lucky Clover',      icon: '🍀', desc: '+1 coin whenever you gain coins (+2 while overcharged). Gains a charge on every quest you complete.', charges: 3 },
   idol:      { name: 'Green Idol',        icon: '🗿', desc: '+2 coins each time you complete a lap (+3 while overcharged), and every lap feeds it a charge.', charges: 3 },
   hourglass: { name: 'Patient Hourglass', icon: '⏳', desc: '+2 turn limit on every board.' },
-  charm:     { name: 'Thief Charm',       icon: '🧿', desc: 'Thieves steal only half as much from you. Recovering your stolen purse feeds it a charge.', charges: 3 },
+  charm:     { name: 'Thief Charm',       icon: '🧿', desc: 'Thieves take only half as much when they spring on you. Cornering one feeds it a charge.', charges: 3 },
   ring:      { name: 'Bargain Ring',      icon: '💍', desc: 'Merchant prices reduced by 2 (min 1).' },
   seal:      { name: 'Quest Seal',        icon: '📜', desc: '+3 coins from every quest reward.' },
   compass:   { name: 'Old Compass',       icon: '🧭', desc: 'Gust tiles no longer restrict your direction.', charges: 3 },
@@ -306,6 +306,7 @@ function startRun() {
     boardArts: 0,
     boardQuests: 0,
     homeLands: 0,
+    lastDir: 1,       // direction of the player's most recent move
     turnMod: 0,       // turns gained/sold on this board
     echoAgain: 0,     // pending Long Echo re-triggers
     pureLaps: 0,      // laps ridden without losing a coin
@@ -682,7 +683,7 @@ function tileInfo(t) {
     case 'haste':    return ['⌛ Time Broker', t.used ? 'Already traded.' : `Sells ${t.amt} of your remaining turns and pays you coins equal to the current turn number (one-time).`];
     case 'quest':    return ['★ Quest', t.done ? 'Quest completed.' : 'A quest giver — land here to hear the offer.'];
     case 'ferry':    return ['⛵ Ferry', 'Carries you straight to the far side of the loop.'];
-    case 'trap':     return ['⚠️ Trap', t.used ? 'A sprung thief trap.' : 'A hidden thief trap — and you can see it coming.'];
+    case 'trap':     return ['⚠️ Trap', t.used ? 'A sprung thief trap.' : 'A hidden thief trap — land here and a thief robs you on the spot.'];
     case 'leech':    return ['🕷️ Leech Nest', t.used ? 'Already drained.' : 'Drains one charge from a relic you carry.'];
     case 'tally': {
       const stake = S.tally + 1;
@@ -711,6 +712,7 @@ function playCard(handIdx, opt) {
   S.selected = null;
   S.busy = true;
   S.forcedDir = 0;
+  S.lastDir = opt.dir;      // the thief bolts against this
   clearHighlights();
   renderHand();
   if (shattered) {
@@ -1037,11 +1039,19 @@ function resolveLanding(dir, depth, sneak) {
     case 'trap':
       if (!t.used) {
         t.used = true;
-        S.thief = { pos: mod(S.pos + Math.floor(S.board.size / 2), S.board.size), loot: 0 };
+        let amt = S.board.hardThief ? rand(6, 10) : rand(3, 6);
+        if (hasArt('charm')) amt = Math.ceil(amt / 2);
+        amt = Math.min(amt, Math.max(0, S.coins));   // it can empty your purse, never bury you
+        // the thief springs out right where you stand and is gone with the coins
+        S.thief = { pos: S.pos, loot: amt, fresh: true };
         ensureThiefEl();
-        addMsg('⚠️ A hidden trap! A thief appears across the board and starts hunting you.');
-        floatText(S.pos, '⚠️', 'bad');
-        showNotice('🥷', 'A thief appears!', 'You sprang a hidden trap — a thief now hunts you around the loop. Catch it for a bounty, or keep your distance.');
+        addMsg(amt ? `⚠️ A trap! A thief springs out and lifts ${amt} coins.`
+                   : '⚠️ A trap! A thief springs out, finds your purse empty and stays put.');
+        floatText(S.pos, amt ? `−${amt} 🪙` : '∅', 'bad');
+        showNotice('🥷', amt ? `The thief takes ${amt} coins` : 'Nothing to steal',
+          'It is standing on your tile. From your next move on it will bolt two tiles the opposite way each turn — land exactly on it, before it runs, to take everything back.');
+        eggBonusGif();
+        if (amt && !addCoins(-amt)) return;
       }
       break;
     case 'ferry': {
@@ -1087,7 +1097,8 @@ function afterEffects() {
     setTimeout(() => resolveLanding(1, 0, false), 420);
     return;
   }
-  if (S.thief && S.thief.pos === S.pos) {
+  // caught only if you end your move on it — and not on the turn it sprang out
+  if (S.thief && !S.thief.fresh && S.thief.pos === S.pos) {
     if (!meetThief()) return;
     if (S.over) return;
   }
@@ -1119,32 +1130,21 @@ function finishTurn() {
   if (!checkBoardEnd()) beginTurn();
 }
 
-// Meeting the thief cuts both ways: empty-handed it robs you and bolts,
-// loaded it hands the purse back. Returns false if the run ended.
+// Landing on the thief before it runs gets the whole purse back.
+// Returns false if the run ended.
 function meetThief() {
+  const loot = S.thief.loot;
   eggBonusGif();
-  if (S.thief.loot > 0) {
-    const loot = S.thief.loot;
-    addMsg(`🥷 You corner the thief and take back your ${loot} coins!`);
-    floatText(S.pos, `+${loot} 🪙`, 'good');
-    S.thief = null;
-    positionNPCs();
-    if (hasArt('charm')) S.artCharges.charm = (S.artCharges.charm || 0) + 1;
-    if (!addCoins(loot)) return false;
-    if (S.quest && S.quest.type === 'hunt' && S.turn <= S.quest.deadline) completeQuest();
-    return true;
-  }
-  let amt = S.board.hardThief ? rand(6, 10) : rand(3, 6);
-  if (hasArt('charm')) amt = Math.ceil(amt / 2);
-  amt = Math.min(amt, Math.max(0, S.coins));   // it can rob you blind but not into debt
-  S.thief.loot = amt;
-  addMsg(amt ? `🥷 The thief lifts ${amt} coins and bolts! Run it down to get them back.`
-             : '🥷 The thief finds your purse empty and slinks away.');
-  floatText(S.pos, amt ? `−${amt} 🪙` : '∅', 'bad');
-  showNotice('🥷', amt ? `Robbed of ${amt} coins` : 'Nothing to steal',
-    amt ? 'The thief is running with your coins. Catch it before the board ends and you get every one of them back.'
-        : 'Your purse was empty, so the thief made off with nothing.');
-  if (amt && !addCoins(-amt)) return false;
+  addMsg(loot ? `🥷 You corner the thief and take back your ${loot} coins!` : '🥷 You corner the thief and it slips away empty-handed.');
+  floatText(S.pos, loot ? `+${loot} 🪙` : '🥷', 'good');
+  showNotice('🥷', 'Thief cornered', loot
+    ? `You catch it flat-footed and recover all ${loot} coins.`
+    : 'It had nothing on it, but at least it is gone.');
+  S.thief = null;
+  positionNPCs();
+  if (hasArt('charm')) feedCharge('charm');
+  if (loot && !addCoins(loot)) return false;
+  if (S.quest && S.quest.type === 'hunt' && S.turn <= S.quest.deadline) completeQuest();
   return true;
 }
 
@@ -1154,17 +1154,12 @@ function moveNPCs() {
     S.board.merchant.pos = mod(S.board.merchant.pos + 1, n);
   }
   if (S.thief) {
-    const speed = S.board.hardThief ? 3 : 2;
-    let d = mod(S.pos - S.thief.pos, n);
-    if (d > n / 2) d -= n;
-    if (S.thief.loot > 0) {
-      // loaded: it runs the other way, keeping its distance
-      const away = d === 0 ? 1 : -Math.sign(d);
-      S.thief.pos = mod(S.thief.pos + away * speed, n);
+    if (S.thief.fresh) {
+      // the turn it appears it stays put, sharing your tile
+      S.thief.fresh = false;
     } else {
-      const step = Math.sign(d) * Math.min(Math.abs(d), speed);
-      S.thief.pos = mod(S.thief.pos + step, n);
-      if (S.thief.pos === S.pos && !meetThief()) return;
+      // it always bolts two tiles against the way you just travelled
+      S.thief.pos = mod(S.thief.pos - S.lastDir * 2, n);
     }
   }
   positionNPCs();
@@ -1277,9 +1272,9 @@ function acceptQuest() {
   addMsg('★ Quest accepted!');
   // a hunt needs prey: if no thief is about, one is flushed out of hiding
   if (S.quest.type === 'hunt' && !S.thief) {
-    S.thief = { pos: mod(S.pos + Math.floor(S.board.size / 2), S.board.size), loot: 0 };
+    S.thief = { pos: mod(S.pos + Math.floor(S.board.size / 2), S.board.size), loot: rand(3, 6), fresh: false };
     ensureThiefEl();
-    addMsg('🥷 A thief breaks cover on the far side of the loop.');
+    addMsg('🥷 A thief breaks cover across the loop, someone else\'s purse in hand.');
   }
   renderAll();
   cont();
