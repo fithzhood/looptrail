@@ -383,6 +383,13 @@ function addCoins(n, why, isQuest) {
   return true;
 }
 
+// settle the tally right now rather than on the next tick, so the money window
+// lands before whatever else is about to be announced
+function flushCoinsNow() {
+  if (coinFlush) { clearTimeout(coinFlush); coinFlush = null; }
+  flushCoinBatch();
+}
+
 function flushCoinBatch() {
   coinFlush = null;
   const batch = coinBatch;
@@ -1062,7 +1069,7 @@ function resolveLanding(dir, depth, sneak) {
         addMsg(amt ? `⚠️ A trap! A thief springs out and lifts ${amt} coins.`
                    : '⚠️ A trap! A thief springs out, finds your purse empty and stays put.');
         floatText(S.pos, amt ? `−${amt} 🪙` : '∅', 'bad');
-        showNotice('🥷', amt ? `The thief takes ${amt} coins` : 'Nothing to steal',
+        showNotice('🥷', amt ? 'A thief robs you' : 'Nothing to steal',
           'It is standing on your tile. From your next move on it will bolt two tiles each turn, always the way that puts the most ground between you — land exactly on it, before it runs, to take everything back.');
         eggBonusGif();
         if (amt && !addCoins(-amt, 'A thief springs from a trap and robs you')) return;
@@ -1153,7 +1160,7 @@ function meetThief(thief) {
   addMsg(loot ? `🥷 You corner the thief and take back your ${loot} coins!` : '🥷 You corner the thief and it slips away empty-handed.');
   floatText(S.pos, loot ? `+${loot} 🪙` : '🥷', 'good');
   showNotice('🥷', 'Thief cornered', loot
-    ? `You catch it flat-footed and recover all ${loot} coins.`
+    ? 'You catch it flat-footed and recover every coin it took.'
     : 'It had nothing on it, but at least it is gone.');
   S.thieves = S.thieves.filter(t => t !== thief);
   positionNPCs();
@@ -1385,7 +1392,7 @@ function completeQuest() {
   addMsg(`★ Quest complete! +${q.reward} coins.`);
   floatText(S.pos, `+${q.reward} 🪙`, 'good');
   showNotice('★', 'Quest complete!',
-    `The quest giver pays you ${q.reward} coins${hasArt('seal') ? ' (+3 from the Quest Seal)' : ''}.` + timeLine);
+    `The quest giver settles up${hasArt('seal') ? ', with a bonus from the Quest Seal' : ''}.` + timeLine);
   addCoins(q.reward, 'A quest giver pays out', true);
 }
 
@@ -1524,7 +1531,7 @@ function refundPurchases() {
     addCoins(value, `You return ${what} to the merchant${value > pu.cost ? ' at triple price' : ''}`);
   }
   S.purchases = [];
-  return ` The merchant takes back your purchases and refunds ${total} coins.`;
+  return total;   // the coin tally announces the money; nobody else should
 }
 
 // ---------- objective / win / loss ----------
@@ -1540,14 +1547,14 @@ function checkBoardEnd() {
 // the coffer lets the player smuggle purchases past the merchant, one charge each
 function settlePurchases(done) {
   const canSmuggle = hasArt('coffer') && (S.artCharges.coffer || 0) > 0;
-  if (!canSmuggle || !S.purchases.length) { done(refundPurchases()); return; }
+  if (!canSmuggle || !S.purchases.length) { refundPurchases(); done(); return; }
   const queue = [...S.purchases];
   let kept = 0;
   const step = () => {
     if (!queue.length || (S.artCharges.coffer || 0) <= 0) {
-      let note = refundPurchases();
-      if (kept) note += ` 🧳 You smuggle ${kept} purchase${kept === 1 ? '' : 's'} out with you.`;
-      done(note);
+      refundPurchases();
+      if (kept) showNotice('🧳', 'Smuggled out', `You keep ${kept} purchase${kept === 1 ? '' : 's'} instead of returning ${kept === 1 ? 'it' : 'them'}.`);
+      done();
       return;
     }
     const pu = queue.shift();
@@ -1593,19 +1600,17 @@ function scatterAshes(id) {
       break;
     case 'clover':
       addCoins(9, `${a.name} crumbles into coins`);
-      tale = 'The withered leaves crumble into 9 coins.';
+      tale = 'The withered leaves crumble into coins.';
       break;
     default:
       addCoins(5, `${a.name} is bought back as a spent husk`);
-      tale = 'The spirits of the trail buy the husk back for 5 coins.';
+      tale = 'The spirits of the trail buy the husk back.';
   }
   showNotice(a.icon, `${a.name} burned out`, tale);
-  return `⏳ ${a.name} burned out. ${tale}`;
 }
 
 // one charge spent per completed board, unless something shields them
 function burnCharges() {
-  let note = '';
   const warded = hasArt('warden') && (S.artCharges.warden || 0) > 0;
   for (const id of [...S.artifacts]) {
     if (!holdsCharges(id)) continue;
@@ -1619,26 +1624,26 @@ function burnCharges() {
     if (S.artCharges[id] <= 0) {
       S.artifacts = S.artifacts.filter(a => a !== id);
       delete S.artCharges[id];
-      note += ' ' + scatterAshes(id);
+      scatterAshes(id);
     }
   }
-  if (warded) note += ' 🛡️ The Warden Sigil bore the cost — your other relics kept their charges.';
-  return note;
+  if (warded) showNotice('🛡️', 'The Warden Sigil holds', 'It bore this board\'s toll alone — your other relics kept their charges.');
 }
 
 function boardWon() {
   S.over = true;
   saveBest(S.boardIndex);
   const spare = Math.max(0, turnLimit() - S.turn);   // measured before ashes tinker with the clock
-  settlePurchases(refundNote => {
-    const expiredNote = burnCharges();
+  settlePurchases(() => {
+    burnCharges();
     // the time you did not need is paid out in coin
     if (spare) addCoins(spare, `You finish with ${spare} turn${spare === 1 ? '' : 's'} to spare`);
     renderAll();
+    // the coin tally is the only place money is counted — show it, then the result
+    flushCoinsNow();
     showNotice('🏁', `Board ${S.boardIndex} complete!`,
-      `${objectiveDesc()} Done with ${spare} turn${spare === 1 ? '' : 's'} to spare.` +
-      (spare ? `\n\n⏱️ Unused time pays out: +${spare} coins.` : ''));
-    showReward(refundNote + expiredNote + (spare ? ` ⏱️ ${spare} unused turn(s) paid out ${spare} coins.` : ''));
+      `${objectiveDesc()} Done with ${spare} turn${spare === 1 ? '' : 's'} to spare.`);
+    showReward(spare);
   });
 }
 
@@ -1680,12 +1685,12 @@ function buildRewardOffers() {
   return offers;
 }
 
-function showReward(refundNote) {
+function showReward(spare) {
   const finished10 = S.boardIndex === 10;
   $('reward-title').textContent = finished10 ? '🏆 Trail Complete!' : `Board ${S.boardIndex} Complete!`;
   $('reward-text').textContent =
     (finished10 ? 'You conquered all 10 boards — endless mode begins, and the trail only gets harder. ' : '') +
-    `Done with ${turnLimit() - S.turn} turn(s) to spare.` + refundNote;
+    `Done with ${spare} turn${spare === 1 ? '' : 's'} to spare.`;
   const wrap = $('reward-items');
   wrap.innerHTML = '';
   buildRewardOffers().forEach(offer => {
