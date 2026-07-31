@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta http-equiv="Cache-Control" content="no-store">
 <title>Looptrail</title>
-<link rel="stylesheet" href="looptrail.css?v=23">
+<link rel="stylesheet" href="looptrail.css?v=24">
 </head>
 <body>
 
@@ -60,6 +60,15 @@
   </div>
 </div>
 
+<div id="forge" class="overlay" hidden>
+  <div class="panel">
+    <h2 class="panel-title">The Whetstone</h2>
+    <p class="panel-text small">The grinder works for coin. Pick a service, then pick the card.</p>
+    <div id="forge-items"></div>
+    <button id="btn-forge-close" class="btn btn-plain">Walk on by</button>
+  </div>
+</div>
+
 <div id="quest" class="overlay" hidden>
   <div class="panel">
     <h2 class="panel-title">★ Quest</h2>
@@ -95,7 +104,8 @@
     <h2 id="reward-title" class="panel-title"></h2>
     <p id="reward-text" class="panel-text small"></p>
     <div id="reward-items"></div>
-    <p class="panel-text small">Choose one reward — it joins your run for good.</p>
+    <p class="panel-text small">Buy at most one — it joins your run for good.</p>
+    <button id="btn-reward-skip" class="btn btn-plain">Take nothing</button>
   </div>
 </div>
 
@@ -149,6 +159,6 @@
   </div>
 </div>
 
-<script src="looptrail.js?v=23"></script>
+<script src="looptrail.js?v=24"></script>
 </body>
 </html>

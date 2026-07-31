@@ -89,7 +89,11 @@ const SPECIALS = {
   longecho: { value: 0, name: 'Long Echo', desc: 'Stay put and trigger this tile twice more.', glass: true },
   shortcut: { value: 0, name: 'Shortcut',  desc: 'Travel straight to the nearest coin tile, either way.', glass: true },
   pace:     { value: 0, name: "Merchant's Pace", desc: 'Moves as far as the current turn number.' },
+  gambit:   { value: 0, name: 'Gambit', desc: 'While it sits in your hand every coin you gain or lose is doubled. Playing it stays put and leaves the tile alone — which is how you put the stakes back down.' },
 };
+
+// the gambit doubles the purse's swings for as long as you refuse to spend it
+const stakes = () => S && S.hand.some(c => c.spec === 'gambit') ? 2 : 1;
 
 // Merchant's Pace grows with the board clock; everything else is fixed
 const cardValue = c => c.spec === 'pace' ? Math.max(1, S.turn) : c.value;
@@ -257,6 +261,15 @@ function makeBoard(b) {
   }
   add(extra, { type: 'tally' }, 1);
   add(extra, { type: 'leech' }, b > 2 ? 1 : 0);
+  // tiles the objective cannot do without — laid down first so a small board
+  // can never trim them away
+  const must = [];
+  if (type === 'precision') {
+    add(must, { type: 'coin', amt: 1 }, 1);
+    add(must, { type: 'loss', amt: 1 }, 1);
+  }
+  // spending down needs somewhere for the money to go: traps breed the thieves
+  if (type === 'spend') add(must, { type: 'trap' }, 2);
   // time tiles: one grants turns, one sells them for coins
   add(crit, { type: 'boon', amt: 2 }, 1);
   add(extra, { type: 'boon', amt: 2 }, size > 18 ? 1 : 0);
@@ -266,12 +279,14 @@ function makeBoard(b) {
   add(extra, { type: 'gust' }, 1 + (size > 20 ? 1 : 0));
   add(extra, { type: 'ferry' }, size > 16 ? 1 : 0);
   shuffle(extra);
-  let bag = crit.concat(extra).slice(0, size - 1);
+  let bag = must.concat(crit, extra).slice(0, size - 1);
   while (bag.length < size - 1) bag.push({ type: 'blank' });
   shuffle(bag);
   const tiles = [{ type: 'start' }, ...bag];
 
-  const merchant = (type === 'arts' || Math.random() < 0.6) ? { pos: rand(2, size - 2) } : null;
+  // boards that ask something of the purse always have somewhere to trade
+  const needsShop = type === 'arts' || type === 'precision' || type === 'spend';
+  const merchant = (needsShop || Math.random() < 0.6) ? { pos: rand(2, size - 2) } : null;
   // the whetstone shows up more often once the deck is getting bloated
   const deckSize = S ? S.draw.length + S.discard.length + S.hand.length : 10;
   const grinder = Math.random() < (deckSize > 13 ? 0.65 : 0.3) ? { pos: rand(2, size - 2) } : null;
@@ -422,6 +437,8 @@ let coinFlush = null;
 function addCoins(n, why, isQuest) {
   if (n > 0 && hasArt('clover')) n += overcharged('clover') ? 2 : 1;
   if (n > 0 && isQuest && hasArt('seal')) n += 3;
+  const mult = stakes();
+  if (mult !== 1) { n *= mult; why = `${why} (doubled by the Gambit)`; }
   S.coins += n;
   if (n > 0) S.boardCoins += n;
   if (n < 0) breakVow();
@@ -718,7 +735,7 @@ window.addEventListener('resize', () => { if (S) layoutBoard(); });
 // ---------- card selection & movement ----------
 function reachableFrom(card) {
   const n = S.board.size;
-  if (card.spec === 'echo' || card.spec === 'longecho') return [{ tile: S.pos, dir: 1, dist: 0 }];
+  if (card.spec === 'echo' || card.spec === 'longecho' || card.spec === 'gambit') return [{ tile: S.pos, dir: 1, dist: 0 }];
   const opts = [];
   const push = (dist, dir) => {
     if (dist <= 0) return;
@@ -809,6 +826,12 @@ function playCard(handIdx, opt) {
   }
 
   const exec = () => {
+    if (card.spec === 'gambit') {
+      setMsg('🎲 You lay the Gambit down. The stakes are back to normal.');
+      renderAll();
+      setTimeout(afterEffects, 400);   // stays put, and the tile is left alone
+      return;
+    }
     if (card.spec === 'echo' || card.spec === 'longecho') {
       const twice = card.spec === 'longecho';
       if (twice) S.echoAgain = 1;
@@ -1207,15 +1230,7 @@ function afterEffects() {
   }
   if (S.board.grinder && S.board.grinder.pos === S.pos && S.hand.length) {
     eggBonusGif();
-    askChoice('🪓 The Whetstone',
-      'The grinder will either destroy a card outright, or grind one down to glass — fragile, but free of any one-way binding.',
-      'Grind to dust', 'Temper to glass',
-      dust => {
-        S.grindMode = dust ? 'dust' : 'glass';
-        S.pendingGrind = true;
-        addMsg(dust ? '🪓 Choose the card to destroy.' : '🪓 Choose the card to temper.');
-        renderAll();
-      });
+    openForge();
     return;
   }
   if (S.board.merchant && S.board.merchant.pos === S.pos) {
@@ -1284,25 +1299,114 @@ function moveNPCs() {
 }
 
 // ---------- discard choice ----------
+// ---------- the whetstone ----------
+// only cards whose printed number actually drives the move can be filed up or down
+const tunable = c => !c.spec || ['charge', 'cycle', 'sneak', 'stride'].includes(c.spec);
+
+function forgeServices() {
+  const b = S.boardIndex;
+  return [
+    { key: 'dust',   name: 'Grind to dust',  price: 4 + b,
+      desc: 'Destroys the card outright. A leaner deck draws better.',
+      ok: () => S.hand.length > 0 },
+    { key: 'up',     name: 'Sharpen (+1)',   price: 5 + b,
+      desc: 'Raises a card\'s number by one, for good.',
+      ok: () => S.hand.some(tunable) },
+    { key: 'down',   name: 'Dull (−1)',      price: 3 + b,
+      desc: 'Lowers a card\'s number by one, for good.',
+      ok: () => S.hand.some(c => tunable(c) && cardValue(c) > 1) },
+    { key: 'glass',  name: 'Temper to glass', price: 6 + b,
+      desc: 'Frees a card of any one-way binding, but every use may shatter it.',
+      ok: () => S.hand.some(c => !isGlass(c)) },
+    { key: 'anneal', name: 'Anneal the glass', price: 14 + b * 2,
+      desc: 'Draws the brittleness out of a glass card and makes it ordinary again. Slow, delicate work.',
+      ok: () => S.hand.some(isGlass) },
+  ];
+}
+
+function openForge() {
+  const wrap = $('forge-items');
+  wrap.innerHTML = '';
+  forgeServices().forEach(s => {
+    const div = document.createElement('div');
+    div.className = 'shop-item';
+    div.innerHTML = `<div class="info"><div class="name">${s.name}</div><div class="desc">${s.desc}</div></div>`;
+    const btn = document.createElement('button');
+    btn.className = 'btn';
+    btn.textContent = `${s.price} 🪙`;
+    if (S.coins < s.price || !s.ok()) btn.disabled = true;
+    btn.addEventListener('click', () => {
+      $('forge').hidden = true;
+      S.grindMode = s.key;
+      S.grindPrice = s.price;
+      S.pendingGrind = true;
+      addMsg(`🪓 ${s.name} — choose the card.`);
+      renderAll();
+    });
+    div.appendChild(btn);
+    wrap.appendChild(div);
+  });
+  $('forge').hidden = false;
+}
+
+function closeForge() {
+  $('forge').hidden = true;
+  finishTurn();
+}
+
 function onCardClick(idx) {
   if (S.pendingGrind) {
     const c = S.hand[idx];
     const was = cardLabel(c);
-    if (S.grindMode === 'glass') {
+    const mode = S.grindMode;
+    // the grinder refuses work it cannot do, and charges nothing for refusing
+    if ((mode === 'up' || mode === 'down') && !tunable(c)) {
+      addMsg('🪓 That card has no number to file. Pick another.');
+      return;
+    }
+    if (mode === 'down' && cardValue(c) <= 1) {
+      addMsg('🪓 It cannot go below one. Pick another.');
+      return;
+    }
+    if (mode === 'anneal' && !isGlass(c)) {
+      addMsg('🪓 That one is not glass. Pick another.');
+      return;
+    }
+    if (mode === 'glass' && isGlass(c)) {
+      addMsg('🪓 That one is already glass. Pick another.');
+      return;
+    }
+    let title, tale;
+    if (mode === 'glass') {
       c.glass = true;
       delete c.dir;                       // tempering burns the one-way binding away
       S.hand.splice(idx, 1);
       S.discard.push(c);
-      showNotice('🪓', `${was} tempered to glass`,
-        'It now runs either way around the loop, but every use risks shattering it for good.');
+      title = `${was} tempered to glass`;
+      tale = 'It now runs either way around the loop, but every use risks shattering it for good.';
+    } else if (mode === 'anneal') {
+      delete c.glass;
+      delete c.shard;
+      S.hand.splice(idx, 1);
+      S.discard.push(c);
+      title = `${was} annealed`;
+      tale = 'The brittleness is drawn out of it. It will never shatter again.';
+    } else if (mode === 'up' || mode === 'down') {
+      c.value += mode === 'up' ? 1 : -1;
+      title = `${was} filed to ${cardLabel(c)}`;
+      tale = mode === 'up' ? 'A longer stride, for the rest of the run.' : 'A shorter stride, for the rest of the run.';
+      renderHand();
     } else {
       S.hand.splice(idx, 1);              // destroyed, not discarded — gone for the run
-      showNotice('🪓', `${was} destroyed`, 'The whetstone grinds it to dust. Your deck is one card leaner for the rest of the run.');
+      title = `${was} destroyed`;
+      tale = 'The whetstone grinds it to dust. Your deck is one card leaner for the rest of the run.';
     }
     S.pendingGrind = false;
     S.board.grinder = null;               // its work done, the grinder packs up
     positionNPCs();
+    showNotice(icon('grinder', 'big'), title, tale);
     renderAll();
+    if (!addCoins(-S.grindPrice, `The whetstone's fee for ${title.toLowerCase()}`)) return;
     finishTurn();
     return;
   }
@@ -1773,6 +1877,13 @@ function buildRewardOffers() {
   else if (Math.random() < 0.6) offers.push({ kind: 'special', id: specs[1] });
   else offers.push({ kind: 'card', value: pick([4, 5]) });
   while (offers.length < 3) offers.push({ kind: 'card', value: pick([3, 4, 5]) });
+  // the spoils are for sale, not for free
+  const b = S.boardIndex;
+  offers.forEach(o => {
+    o.price = o.kind === 'artifact' ? rand(10, 14) + b * 2
+            : o.kind === 'special'  ? rand(7, 10) + b
+            :                         rand(4, 6) + Math.floor(b / 2);
+  });
   return offers;
 }
 
@@ -1803,11 +1914,16 @@ function showReward(spare) {
     div.innerHTML = `<div class="info"><div class="name">${name}</div><div class="desc">${desc}</div></div>`;
     const btn = document.createElement('button');
     btn.className = 'btn';
-    btn.textContent = 'Take';
+    btn.textContent = `${offer.price} 🪙`;
+    if (S.coins < offer.price) btn.disabled = true;
     btn.addEventListener('click', () => {
       if (offer.kind === 'artifact') gainArtifact(offer.id);
       else if (offer.kind === 'special') S.discard.push(makeSpecial(offer.id));
       else S.discard.push({ value: offer.value });
+      const what = offer.kind === 'artifact' ? ARTIFACTS[offer.id].name
+                 : offer.kind === 'special' ? SPECIALS[offer.id].name + ' card'
+                 : `a ${offer.value} card`;
+      addCoins(-offer.price, `You claim ${what} from the spoils`);
       nextBoard();
     });
     div.appendChild(btn);
@@ -1846,11 +1962,12 @@ function renderHand() {
     el.className = 'card'
       + (c.spec ? ' special' : '')
       + (isGlass(c) ? ' glass' : '')
+      + (c.spec === 'gambit' ? ' gambit' : '')
       + (S.selected === i && !S.pendingDiscard ? ' selected' : '');
     const dirMark = c.dir === 1 ? '<div class="cdir">↻</div>' : c.dir === -1 ? '<div class="cdir ccw">↺</div>' : '';
     // cards without a fixed distance show a glyph instead of a number
-    const free = c.spec === 'leap' || c.spec === 'shortcut';
-    const face = c.spec === 'leap' ? '⁙' : c.spec === 'shortcut' ? '⇢' : cardValue(c);
+    const free = c.spec === 'leap' || c.spec === 'shortcut' || c.spec === 'gambit';
+    const face = c.spec === 'leap' ? '⁙' : c.spec === 'shortcut' ? '⇢' : c.spec === 'gambit' ? '×2' : cardValue(c);
     el.dataset.v = free ? '' : cardValue(c);
     const label = c.spec ? SPECIALS[c.spec].name : (c.shard ? 'Shard' : (c.glass ? 'Tempered' : ''));
     el.innerHTML = `<div class="val">${face}</div>` + (label ? `<div class="name">${label}</div>` : '') + dirMark;
@@ -1858,8 +1975,15 @@ function renderHand() {
     hand.appendChild(el);
   });
   const sel = S.selected !== null ? S.hand[S.selected] : null;
+  const grindHint = {
+    dust: '🪓 Tap the card to destroy forever.',
+    glass: '🪓 Tap the card to temper into glass.',
+    anneal: '🪓 Tap the glass card to make it ordinary.',
+    up: '🪓 Tap the card to raise its number.',
+    down: '🪓 Tap the card to lower its number.',
+  };
   $('hand-hint').textContent = S.pendingGrind
-    ? (S.grindMode === 'glass' ? '🪓 Tap the card to temper into glass.' : '🪓 Tap the card to destroy forever.')
+    ? grindHint[S.grindMode]
     : S.pendingDiscard
     ? '✂️ Tap a card to discard it.'
     : sel
@@ -1917,6 +2041,8 @@ renderMenu();
 $('btn-start').addEventListener('click', startRun);
 $('btn-result').addEventListener('click', () => { if (resultAction) resultAction(); });
 $('btn-shop-close').addEventListener('click', closeShop);
+$('btn-forge-close').addEventListener('click', closeForge);
+$('btn-reward-skip').addEventListener('click', nextBoard);
 $('btn-quest-accept').addEventListener('click', acceptQuest);
 $('btn-quest-decline').addEventListener('click', declineQuest);
 $('notice').addEventListener('click', closeNotice);

@@ -564,6 +564,19 @@ body.egg .card .cdir.ccw { color: #ff8f8f; }
 }
 .card.special .val { color: #8a6d1a; }
 
+/* the gambit earns its keep by staying in hand, so it stands out there */
+.card.gambit {
+  background: linear-gradient(160deg, #f6e2ee, #e0b8d0);
+  border-color: #8a3a6a;
+  box-shadow: 0 3px 5px rgba(58,47,27,.3), 0 0 0 2px rgba(138, 58, 106, .35),
+              inset 0 0 0 3px rgba(255,255,255,.4);
+}
+.card.gambit .val { color: #8a3a6a; font-size: 27px; }
+.card.gambit .name { color: #8a3a6a; }
+.card.gambit::before, .card.gambit::after { color: #8a3a6a; }
+body.egg .card.gambit { background: linear-gradient(160deg, #3a1730, #2a0f22); border-color: #c86aa0; }
+body.egg .card.gambit .val, body.egg .card.gambit .name { color: #f0a8d0; }
+
 /* glass cards: fragile, may shatter when played */
 .card.glass {
   background: linear-gradient(160deg, #e8f6fb, #bfe2ef);
